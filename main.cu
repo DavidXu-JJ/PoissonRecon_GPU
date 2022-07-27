@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <bitset>
 #include <cstdlib>
+#include <unordered_map>
 #include "Geometry.cuh"
 #include "OctNode.cuh"
 #include "cuda.h"
@@ -14,6 +15,7 @@
 #include "thrust/scan.h"
 #include "thrust/sort.h"
 #include "thrust/copy.h"
+#include "Hash.cuh"
 
 
 //#define FORCE_UNIT_NORMALS 1
@@ -69,6 +71,15 @@ __global__ void generateCode(Point3D<float> *points,long long *code,int size){
     }
 }
 
+__global__ void generateHashTable(int *keyValue,KeyValue *hashTable,int size){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<size;i+=stride){
+        insert(hashTable,keyValue[i],keyValue[i+size]);
+    }
+}
+
 __global__ void generateMark(long long *code,int size){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -99,12 +110,14 @@ __global__ void generateNodeNums(long long* uniqueCode,int *nodeNums,int size){
     }
 }
 
-__global__ void initUniqueNode(long long *uniqueCode, OctNode *uniqueNode, int size){
+__global__ void initUniqueNode(long long *uniqueCode, KeyValue *keyStart,KeyValue *keyCount,OctNode *uniqueNode, int size){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=offset;i<size;i+=stride){
         uniqueNode[i].key= int(uniqueCode[i] >> 32 ) ;
+        uniqueNode[i].pidx=find(keyStart,uniqueNode[i].key);
+        uniqueNode[i].pnum=find(keyCount,uniqueNode[i].key);
     }
 }
 
@@ -208,8 +221,49 @@ int main() {
     /**     Step 3: sort all sample points      */
     thrust::device_ptr<long long> key_ptr=thrust::device_pointer_cast<long long>(key);
     thrust::sort_by_key(key_ptr,key_ptr+count,samplePoints);
-//    thrust::sort(code_ptr,code_ptr+count,thrust::less<long long>());
     cudaDeviceSynchronize();
+
+    long long *key_h=(long long*)malloc(nByte);
+    CHECK(cudaMemcpy(key_h,key,nByte,cudaMemcpyDeviceToHost));
+    std::unordered_map<int,int> key_start_h;
+    std::unordered_map<int,int> key_count_h;
+    for(int i=0;i<count;++i){
+        int xyz=int(key_h[i]>>32);
+        if(!key_start_h.count(xyz)){
+            key_start_h[xyz]=i;
+        }
+        ++key_count_h[xyz];
+    }
+
+    thrust::host_vector<int> key_start_combined_h;
+    thrust::host_vector<int> key_count_combined_h;
+    for(auto& i:key_start_h){
+        key_start_combined_h.push_back(i.first);
+    }
+    for(auto& i:key_start_h){
+        key_start_combined_h.push_back(i.second);
+    }
+    for(auto& i:key_count_h){
+        key_count_combined_h.push_back(i.first);
+    }
+    for(auto& i:key_count_h){
+        key_count_combined_h.push_back(i.second);
+    }
+    int key_start_size=key_start_h.size();
+    int key_count_size=key_count_h.size();
+
+    thrust::device_vector<int> key_start_combined=key_start_combined_h;
+    thrust::device_vector<int> key_count_combined=key_count_combined_h;
+
+    int *key_start_combined_ptr=thrust::raw_pointer_cast(&key_start_combined[0]);
+    int *key_count_combined_ptr=thrust::raw_pointer_cast(&key_count_combined[0]);
+
+    KeyValue* start_hashTable=create_hashtable();
+    KeyValue* count_hashTable=create_hashtable();
+    generateHashTable<<<grid,block>>>(key_start_combined_ptr,start_hashTable,key_start_size);
+    generateHashTable<<<grid,block>>>(key_count_combined_ptr,count_hashTable,key_count_size);
+    cudaDeviceSynchronize();
+
 
     /**     Step 4: find the unique nodes       */
     generateMark<<<grid,block>>>(key,count);
@@ -231,9 +285,15 @@ int main() {
     nByte=sizeof(OctNode)*uniqueCount_h;
     CHECK(cudaMalloc((OctNode **)&uniqueNode,nByte));
     long long *uniqueCode_ptr=thrust::raw_pointer_cast(&uniqueCode[0]);
-    initUniqueNode<<<grid,block>>>(uniqueCode_ptr,uniqueNode,uniqueCount_h);
+    initUniqueNode<<<grid,block>>>(uniqueCode_ptr,start_hashTable,count_hashTable,uniqueNode,uniqueCount_h);
     cudaDeviceSynchronize();
 
+//    nByte=sizeof(OctNode)*uniqueCount_h;
+//    OctNode *hh=(OctNode*) malloc(nByte);
+//    cudaMemcpy(hh,uniqueNode,nByte,cudaMemcpyDeviceToHost);
+//    for(int i=0;i<uniqueCount_h;++i){
+//        std::cout<<std::bitset<32>(hh[i].key)<<" pidx:"<<hh[i].pidx<<" pnum:"<<hh[i].pnum<<std::endl;
+//    }
 
     /**     Step 5: augment uniqueNode      */
     int *nodeNums=NULL;
@@ -272,6 +332,8 @@ int main() {
     printf("Numbers of points:%d\nNumbers of uniqueCode:%d\n",count,uniqueCount_h);
     printf("GPU:%lfs\n",ed-mid);
 
+
+    free(key_h);
     cudaFree(key);
     cudaFree(uniqueNode);
     cudaFree(nodeNums);
