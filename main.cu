@@ -226,8 +226,6 @@ int main() {
     }
     uniqueCode.resize(uniqueCount_h);
 
-    /**     Code above is fine    */
-
     /**     Create uniqueN ode according to uniqueCode  */
     OctNode *uniqueNode=NULL;
     nByte=sizeof(OctNode)*uniqueCount_h;
@@ -267,7 +265,8 @@ int main() {
     OctNode *NodeArray=NULL;
     nByte=sizeof(OctNode) * allNodeNums;
     CHECK(cudaMalloc((OctNode **)&NodeArray, nByte));
-    generateNodeArray<<<grid,block>>>(uniqueNode,nodeAddress,NodeArray,allNodeNums);
+    CHECK(cudaMemset(NodeArray,0,nByte));
+    generateNodeArray<<<grid,block>>>(uniqueNode,nodeAddress,NodeArray,uniqueCount_h);
 
     double ed=cpuSecond();
     printf("Numbers of points:%d\nNumbers of uniqueCode:%d\n",count,uniqueCount_h);
