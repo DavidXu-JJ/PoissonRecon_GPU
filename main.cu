@@ -207,8 +207,81 @@ __global__ void generateNodeArrayD_1(OctNode *uniqueNodeArrayD_1,int *nodeAddres
     }
 }
 
+__host__ void pipelineUniqueNode_D_1(OctNode *uniqueNode_D,int *nodeAddress_D,int uniqueCount_D,int allNodeNums_D,int depthD,
+                                     OctNode *uniqueNode_D_1, int &uniqueCount_D_1)
+{
+    uniqueCount_D_1=allNodeNums_D/8;
+    int nByte=sizeof(OctNode) * uniqueCount_D_1;
+//    CHECK(cudaMalloc((OctNode **)&uniqueNode_D_1,nByte));
+//    CHECK(cudaMemset(uniqueNode_D_1,0,nByte));
+    KeyValue *keyIndexHash=create_hashtable();
+    KeyValue *pidxHash=create_hashtable();
+    dim3 grid=(32,32);
+    dim3 block=(32,32);
+    generateNodeKeyIndexHash<<<grid,block>>>(uniqueNode_D,nodeAddress_D,uniqueCount_D,depthD,keyIndexHash);
+    cudaDeviceSynchronize();
+    generateNodeKeyPidxHash<<<grid,block>>>(uniqueNode_D,uniqueCount_D,depthD,pidxHash);
+    cudaDeviceSynchronize();
+    generateUniqueNodeArrayD_1<<<grid,block>>>(uniqueNode_D,uniqueCount_D,keyIndexHash,pidxHash,depthD,uniqueNode_D_1);
+    cudaDeviceSynchronize();
+    destroy_hashtable(keyIndexHash);
+    destroy_hashtable(pidxHash);
 
-//__global__ void pipelineNodeArrayD_1(OctNode *uniqueNodeD,)
+    nByte=sizeof(OctNode) *uniqueCount_D_1;
+    OctNode *hh=(OctNode*)malloc(nByte);
+    cudaMemcpy(hh,uniqueNode_D_1,nByte,cudaMemcpyDeviceToHost);
+    for(int i=0;i<uniqueCount_D_1;++i){
+        std::cout<<std::bitset<32>(hh[i].key)<<" pidx:"<<hh[i].pidx<<" pnum:"<<hh[i].pnum<<std::endl;
+    }
+
+}
+
+void pipelineNodeAddress_D_1(OctNode *uniqueNode_D_1,int uniqueCount_D_1,int depthD,
+                             int *NodeAddress_D_1)
+{
+    dim3 grid=(32,32);
+    dim3 block=(32,32);
+    int *NodeNums_D_1=NULL;
+    int nByte=sizeof(int)*uniqueCount_D_1;
+    CHECK(cudaMalloc((int **)&NodeNums_D_1,nByte));
+    CHECK(cudaMemset(NodeNums_D_1,0,nByte));
+//    CHECK(cudaMalloc((int **)&NodeAddress_D_1,nByte));
+//    CHECK(cudaMemset(NodeAddress_D_1,0,nByte));
+    generateNodeNumsD_1<<<grid,block>>>(uniqueNode_D_1, NodeNums_D_1, uniqueCount_D_1, depthD-1);
+    cudaDeviceSynchronize();
+
+    thrust::device_ptr<int> NodeNums_D_1_ptr=thrust::device_pointer_cast<int>(NodeNums_D_1);
+    thrust::device_ptr<int> NodeAddress_D_1_ptr=thrust::device_pointer_cast<int>(NodeAddress_D_1);
+    thrust::inclusive_scan(NodeNums_D_1_ptr,NodeNums_D_1_ptr+uniqueCount_D_1,NodeAddress_D_1_ptr);
+    cudaDeviceSynchronize();
+    cudaFree(NodeNums_D_1);
+}
+
+//__host__ void pipelineNodeArrayD_1(OctNode *uniqueNode_D,int *nodeAddress_D,int uniqueCount_D,int allNodeNums_D,int depthD,
+//                                   OctNode *uniqueNode_D_1,int &uniqueCount_D_1,
+//                                   int *NodeAddress_D_1,
+//                                   OctNode *NodeArray_D_1,int &allNodeNums_D_1)
+//{
+//    pipelineUniqueNode_D_1(uniqueNode_D,nodeAddress_D,uniqueCount_D,allNodeNums_D,depthD,
+//                           uniqueNode_D_1,uniqueCount_D_1);
+//
+//    pipelineNodeAddress_D_1(uniqueNode_D_1,uniqueCount_D_1,depthD,
+//                            NodeAddress_D_1);
+//
+//    dim3 grid=(32,32);
+//    dim3 block=(32,32);
+//    int lastAddrD_1;
+//    CHECK(cudaMemcpy(&lastAddrD_1,NodeAddress_D_1+uniqueCount_D_1-1,sizeof(int),cudaMemcpyDeviceToHost));
+//    allNodeNums_D_1=lastAddrD_1+8;
+//
+//    int nByte=sizeof(OctNode) * allNodeNums_D_1;
+////    CHECK(cudaMalloc((OctNode **)&NodeArray_D_1, nByte));
+////    CHECK(cudaMemset(NodeArray_D_1,0,nByte));
+//
+//    generateNodeArrayD_1<<<grid,block>>>(uniqueNode_D_1,NodeAddress_D_1,NodeArray_D_1,uniqueCount_D_1,depthD);
+//    cudaDeviceSynchronize();
+//
+//}
 
 
 
@@ -373,110 +446,50 @@ int main() {
     cudaDeviceSynchronize();
 
     /**     D-1     */
-    OctNode *uniqueNodeArrayD_1=NULL;
-    int D_1Num=allNodeNums/8;
-    nByte=sizeof(OctNode) * D_1Num;
-    CHECK(cudaMalloc((OctNode **)&uniqueNodeArrayD_1,nByte));
-    CHECK(cudaMemset(uniqueNodeArrayD_1,0,nByte));
-    KeyValue *keyIndexHash=create_hashtable();
-    KeyValue *pidxHash=create_hashtable();
-    generateNodeKeyIndexHash<<<grid,block>>>(uniqueNode,nodeAddress,uniqueCount_h,maxDepth_h,keyIndexHash);
-    cudaDeviceSynchronize();
-    generateNodeKeyPidxHash<<<grid,block>>>(uniqueNode,uniqueCount_h,maxDepth_h,pidxHash);
-    cudaDeviceSynchronize();
-    generateUniqueNodeArrayD_1<<<grid,block>>>(uniqueNode,uniqueCount_h,keyIndexHash,pidxHash,maxDepth_h,uniqueNodeArrayD_1);
-    cudaDeviceSynchronize();
-    destroy_hashtable(keyIndexHash);
-    destroy_hashtable(pidxHash);
+    OctNode *uniqueNode_D=uniqueNode;
+    int *NodeAddress_D=nodeAddress;
+    int uniqueCount_D=uniqueCount_h;
+    int allNodeNums_D=allNodeNums;
+    for(int depthD=maxDepth_h;depthD>=1;--depthD){
+        OctNode *uniqueNode_D_1=NULL,*NodeArray_D_1=NULL;
+        int D_1Nums=allNodeNums_D/8;
+        nByte=sizeof(OctNode) * D_1Nums;
+        CHECK(cudaMalloc((OctNode **)&uniqueNode_D_1,nByte));
+        CHECK(cudaMemset(uniqueNode_D_1,0,nByte));
+        int *NodeAddress_D_1=NULL;
+        nByte=sizeof(int) * D_1Nums;
+        CHECK(cudaMalloc((int **)&NodeAddress_D_1,nByte));
+        CHECK(cudaMemset(NodeAddress_D_1,0,nByte));
+        int uniqueCount_D_1;
+        int allNodeNums_D_1;
+        pipelineUniqueNode_D_1(uniqueNode_D,NodeAddress_D,uniqueCount_D,allNodeNums_D,depthD,
+                               uniqueNode_D_1,uniqueCount_D_1);
+        pipelineNodeAddress_D_1(uniqueNode_D_1,uniqueCount_D_1,depthD,
+                                NodeAddress_D_1);
 
-    OctNode *h=(OctNode *)malloc(nByte);
-    cudaMemcpy(h,uniqueNodeArrayD_1,nByte,cudaMemcpyDeviceToHost);
-    for(int i=0;i<D_1Num;++i){
-        std::cout<<std::bitset<32>(h[i].key)<<" pidx:"<<h[i].pidx<<" pnum:"<<h[i].pnum<<std::endl;
+        int lastAddrD_1;
+        CHECK(cudaMemcpy(&lastAddrD_1,NodeAddress_D_1+uniqueCount_D_1-1,sizeof(int),cudaMemcpyDeviceToHost));
+        allNodeNums_D_1=lastAddrD_1+8;
+
+        nByte=sizeof(OctNode)*allNodeNums_D_1;
+        CHECK(cudaMalloc((OctNode **)&NodeArray_D_1, nByte));
+        CHECK(cudaMemset(NodeArray_D_1,0,nByte));
+
+        generateNodeArrayD_1<<<grid, block>>>(uniqueNode_D_1, NodeAddress_D_1, NodeArray_D_1, uniqueCount_D_1, depthD);
+        cudaDeviceSynchronize();
+
+        nByte=sizeof(OctNode) *uniqueCount_D_1;
+        OctNode *h=(OctNode*)malloc(nByte);
+        cudaMemcpy(h,uniqueNode_D_1,nByte,cudaMemcpyDeviceToHost);
+        for(int i=0;i<uniqueCount_D_1;++i){
+            std::cout<<std::bitset<32>(h[i].key)<<" pidx:"<<h[i].pidx<<" pnum:"<<h[i].pnum<<std::endl;
+        }
+        printf("%d %d\n",uniqueCount_D_1, allNodeNums_D_1);
+        uniqueNode_D=uniqueNode_D_1;
+        NodeAddress_D=NodeAddress_D_1;
+        uniqueCount_D=uniqueCount_D_1;
+        allNodeNums_D=allNodeNums_D_1;
     }
-
-
-
-    int *NodeNums_D_1=NULL,*NodeAddress_D_1=NULL;
-    nByte=sizeof(int) * D_1Num;
-    CHECK(cudaMalloc((int **)&NodeNums_D_1,nByte));
-    CHECK(cudaMemset(NodeNums_D_1,0,nByte));
-
-    CHECK(cudaMalloc((int **)&NodeAddress_D_1,nByte));
-    CHECK(cudaMemset(NodeAddress_D_1,0,nByte));
-
-    generateNodeNumsD_1<<<grid,block>>>(uniqueNodeArrayD_1, NodeNums_D_1, D_1Num, maxDepth_h-1);
-    cudaDeviceSynchronize();
-
-    thrust::device_ptr<int> NodeNums_D_1_ptr=thrust::device_pointer_cast<int>(NodeNums_D_1);
-    thrust::device_ptr<int> NodeAddress_D_1_ptr=thrust::device_pointer_cast<int>(NodeAddress_D_1);
-    thrust::inclusive_scan(NodeNums_D_1_ptr,NodeNums_D_1_ptr+D_1Num,NodeAddress_D_1_ptr);
-    cudaDeviceSynchronize();
-
-    int *nodenum_1=(int *)malloc(nByte);
-    int *nodeaddr_1=(int *)malloc(nByte);
-    cudaMemcpy(nodenum_1,NodeNums_D_1,nByte,cudaMemcpyDeviceToHost);
-    cudaMemcpy(nodeaddr_1,NodeAddress_D_1,nByte,cudaMemcpyDeviceToHost);
-    for(int i=0;i<D_1Num;++i){
-        printf("idx:%d nodenum:%d nodeaddr:%d\n",i,nodenum_1[i],nodeaddr_1[i]);
-    }
-
-    nByte=sizeof(OctNode)*D_1Num;
-    OctNode *hh=(OctNode *)malloc(nByte);
-    cudaMemcpy(hh,uniqueNodeArrayD_1,nByte,cudaMemcpyDeviceToHost);
-    for(int i=0;i<D_1Num;++i){
-        if(hh[i].key!=0)
-            std::cout<<std::bitset<32>(hh[i].key)<<" pidx:"<<hh[i].pidx<<" pnum:"<<hh[i].pnum<<std::endl;
-    }
-
-
-    int lastAddrD_1;
-    CHECK(cudaMemcpy(&lastAddrD_1,NodeAddress_D_1+D_1Num-1,sizeof(int),cudaMemcpyDeviceToHost));
-    int allNodeNumsD_1=lastAddrD_1+8;
-    OctNode *NodeArrayD_1=NULL;
-    nByte=sizeof(OctNode) * allNodeNumsD_1;
-    CHECK(cudaMalloc((OctNode **)&NodeArrayD_1, nByte));
-    CHECK(cudaMemset(NodeArrayD_1,0,nByte));
-
-    generateNodeArrayD_1<<<grid,block>>>(uniqueNodeArrayD_1,NodeAddress_D_1,NodeArrayD_1,D_1Num,maxDepth_h);
-    cudaDeviceSynchronize();
-
-    //---------------------------
-
-    OctNode *hhh=(OctNode *)malloc(nByte);
-    cudaMemcpy(hhh,NodeArrayD_1,nByte,cudaMemcpyDeviceToHost);
-    for(int i=0;i<allNodeNumsD_1;++i){
-        if(hhh[i].key!=0)
-        std::cout<<std::bitset<32>(hhh[i].key)<<" pidx:"<<hhh[i].pidx<<" pnum:"<<hhh[i].pnum<<std::endl;
-    }
-
-
-    OctNode *uniqueNodeArrayD_2=NULL;
-    int D_2Num=allNodeNumsD_1/8;
-    nByte=sizeof(OctNode) * D_2Num;
-    CHECK(cudaMalloc((OctNode **)&uniqueNodeArrayD_2,nByte));
-    CHECK(cudaMemset(uniqueNodeArrayD_2,0,nByte));
-    KeyValue *keyIndexHash_2=create_hashtable();
-    KeyValue *pidxHash_2=create_hashtable();
-    generateNodeKeyIndexHash<<<grid,block>>>(uniqueNodeArrayD_1,NodeAddress_D_1,D_1Num,maxDepth_h-1,keyIndexHash_2);
-    cudaDeviceSynchronize();
-    generateNodeKeyPidxHash<<<grid,block>>>(uniqueNodeArrayD_1,D_1Num,maxDepth_h-1,pidxHash_2);
-    cudaDeviceSynchronize();
-    generateUniqueNodeArrayD_1<<<grid,block>>>(uniqueNodeArrayD_1,D_1Num,keyIndexHash_2,pidxHash_2,maxDepth_h-1,uniqueNodeArrayD_2);
-    cudaDeviceSynchronize();
-
-    OctNode *hhhh=(OctNode *)malloc(nByte);
-    cudaMemcpy(hhhh,uniqueNodeArrayD_2,nByte,cudaMemcpyDeviceToHost);
-    for(int i=0;i<D_2Num;++i){
-        std::cout<<std::bitset<32>(hhhh[i].key)<<" pidx:"<<hhhh[i].pidx<<" pnum:"<<hhhh[i].pnum<<std::endl;
-    }
-
-
-//    int *hh=(int *)malloc(nByte);
-//    cudaMemcpy(hh,NodeNums_D_1,nByte,cudaMemcpyDeviceToHost);
-//    for(int i=0;i<D_1Num;++i){
-//        std::cout<<hh[i]<<std::endl;
-//    }
 
 
 
@@ -489,7 +502,7 @@ int main() {
     cudaFree(nodeNums);
     cudaFree(nodeAddress);
     cudaFree(NodeArrayD);
-    cudaFree(uniqueNodeArrayD_1);
+//    cudaFree(uniqueNodeArrayD_1);
 //    free(NodeArrayD_1_h);
 
     destroy_hashtable(start_hashTable);
