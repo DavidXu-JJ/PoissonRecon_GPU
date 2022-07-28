@@ -50,6 +50,44 @@ __device__ void insert(KeyValue *hashtable,const int& key,const int& value){
     }
 }
 
+__device__ void insertMin(KeyValue *hashtable,const int& key,const int& value){
+    int slot = hash(key);
+    while(true)
+    {
+        int prev = atomicCAS(&hashtable[slot].key, kEmpty, key);
+        if(prev == kEmpty)
+        {
+            atomicExch(&hashtable[slot].value,0x7fffffff);
+            atomicMin(&hashtable[slot].value,value);
+            return;
+        }
+        if(prev == key)
+        {
+            atomicMin(&hashtable[slot].value,value);
+            return;
+        }
+        slot = (slot + 1) & (kHashTableCapacity-1);
+    }
+}
+
+__device__ void keyAdd(KeyValue *hashtable,const int& key){
+    int slot = hash(key);
+    while(true)
+    {
+        int prev = atomicCAS(&hashtable[slot].key, kEmpty, key);
+        if(prev == kEmpty)
+        {
+            atomicAdd(&hashtable[slot].value,1);
+        }
+        if(prev == kEmpty || prev == key)
+        {
+            atomicAdd(&hashtable[slot].value,1);
+            return;
+        }
+        slot = (slot + 1) & (kHashTableCapacity-1);
+    }
+}
+
 
 __device__ int find(KeyValue *hashtable,const int& key){
     int slot = hash(key);
