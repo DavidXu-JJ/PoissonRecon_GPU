@@ -11,7 +11,7 @@ struct KeyValue
     int value;
 };
 
-const int kHashTableCapacity = 128 * 1024 * 1024;
+const int kHashTableCapacity = 8 * 1024 * 1024;
 
 const int kEmpty = 0xffffffff;
 
