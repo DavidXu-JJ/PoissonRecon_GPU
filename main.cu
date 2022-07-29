@@ -249,34 +249,6 @@ void pipelineNodeAddress_D_1(OctNode *uniqueNode_D_1,int uniqueCount_D_1,int dep
     cudaFree(NodeNums_D_1);
 }
 
-//__host__ void pipelineNodeArrayD_1(OctNode *uniqueNode_D,int *nodeAddress_D,int uniqueCount_D,int allNodeNums_D,int depthD,
-//                                   OctNode *uniqueNode_D_1,int &uniqueCount_D_1,
-//                                   int *NodeAddress_D_1,
-//                                   OctNode *NodeArray_D_1,int &allNodeNums_D_1)
-//{
-//    pipelineUniqueNode_D_1(uniqueNode_D,nodeAddress_D,uniqueCount_D,allNodeNums_D,depthD,
-//                           uniqueNode_D_1,uniqueCount_D_1);
-//
-//    pipelineNodeAddress_D_1(uniqueNode_D_1,uniqueCount_D_1,depthD,
-//                            NodeAddress_D_1);
-//
-//    dim3 grid=(32,32);
-//    dim3 block=(32,32);
-//    int lastAddrD_1;
-//    CHECK(cudaMemcpy(&lastAddrD_1,NodeAddress_D_1+uniqueCount_D_1-1,sizeof(int),cudaMemcpyDeviceToHost));
-//    allNodeNums_D_1=lastAddrD_1+8;
-//
-//    int nByte=sizeof(OctNode) * allNodeNums_D_1;
-////    CHECK(cudaMalloc((OctNode **)&NodeArray_D_1, nByte));
-////    CHECK(cudaMemset(NodeArray_D_1,0,nByte));
-//
-//    generateNodeArrayD_1<<<grid,block>>>(uniqueNode_D_1,NodeAddress_D_1,NodeArray_D_1,uniqueCount_D_1,depthD);
-//    cudaDeviceSynchronize();
-//
-//}
-
-
-
 struct markCompact{
     __host__ __device__
     bool operator()(const long long x){
@@ -284,10 +256,10 @@ struct markCompact{
     }
 };
 
-
-int main() {
-    char fileName[]="/home/davidxu/horse.npts";
-
+__host__ void pipelineBuildNodeArray(char *fileName,
+                                     int NodeArrayCount_h[maxDepth_h+1],int BaseAddressArray[maxDepth_h+1], //host
+                                     Point3D<float> *&samplePoints_d,Point3D<float> *&sampleNormals_d,OctNode *&NodeArray)    //device
+{
     PointStream<float>* pointStream;
     char* ext = GetFileExtension(fileName);
     if      (!strcasecmp(ext,"bnpts"))      pointStream = new BinaryPointStream<float>(fileName);
@@ -321,7 +293,8 @@ int main() {
     for(int i=0;i<DIMENSION;++i)
         center.coords[i]-=scale/2;
 
-    thrust::host_vector<Point3D<float> > p_h(count),n_h(count);
+    Point3D<float> *p_h=(Point3D<float> *)malloc(sizeof(Point3D<float>) * count);
+    Point3D<float> *n_h=(Point3D<float> *)malloc(sizeof(Point3D<float>) * count);
 
     pointStream->reset();
     int idx=0;
@@ -347,12 +320,13 @@ int main() {
     }
 
     double mid=cpuSecond();
-    printf("Read takes:%lfs\n",mid-st);
+    printf("Total points number:%d ,Read takes:%lfs\n",count,mid-st);
 
-    thrust::device_vector<Point3D<float> > p_d=p_h,n_d=n_h;
+    CHECK(cudaMalloc((Point3D<float> **)&samplePoints_d,sizeof(Point3D<float>) * count));
+    CHECK(cudaMemcpy(samplePoints_d,p_h,sizeof(Point3D<float>) * count, cudaMemcpyHostToDevice));
 
-    Point3D<float> * samplePoints=thrust::raw_pointer_cast(&p_d[0]);
-    Point3D<float> * sampleNormals=thrust::raw_pointer_cast(&n_d[0]);
+    CHECK(cudaMalloc((Point3D<float> **)&sampleNormals_d,sizeof(Point3D<float>) * count));
+    CHECK(cudaMemcpy(sampleNormals_d,n_h,sizeof(Point3D<float>) * count, cudaMemcpyHostToDevice));
 
     /**     Step 2: compute shuffled xyz key and sorting code   */
     long long *key=NULL;
@@ -360,12 +334,21 @@ int main() {
     CHECK(cudaMalloc((long long **)&key, nByte));
     dim3 grid=(32,32);
     dim3 block=(32,32);
-    generateCode<<<grid,block>>>(samplePoints,key,count);
+    generateCode<<<grid,block>>>(samplePoints_d,key,count);
     cudaDeviceSynchronize();
+
+    long long *key_backup=NULL;
+    CHECK(cudaMalloc((long long **)&key_backup, nByte));
+    CHECK(cudaMemcpy(key_backup,key,nByte,cudaMemcpyDeviceToDevice));
 
     /**     Step 3: sort all sample points      */
     thrust::device_ptr<long long> key_ptr=thrust::device_pointer_cast<long long>(key);
-    thrust::sort_by_key(key_ptr,key_ptr+count,samplePoints);
+    thrust::sort_by_key(key_ptr,key_ptr+count,samplePoints_d);
+    cudaDeviceSynchronize();
+
+    CHECK(cudaMemcpy(key,key_backup,nByte,cudaMemcpyDeviceToDevice));
+    cudaFree(key_backup);
+    thrust::sort_by_key(key_ptr,key_ptr+count,sampleNormals_d);
     cudaDeviceSynchronize();
 
     KeyValue* start_hashTable=create_hashtable();
@@ -378,32 +361,24 @@ int main() {
     /**     Step 4: find the unique nodes       */
     generateMark<<<grid,block>>>(key,count);
     cudaDeviceSynchronize();
-    thrust::device_vector<long long> uniqueCode(count,-1);
-    thrust::copy_if(key_ptr,key_ptr+count,uniqueCode.begin(),markCompact());
+    long long *uniqueCode=NULL;
+    CHECK(cudaMalloc((long long **)&uniqueCode,sizeof(long long) * count));
+    thrust::device_ptr<long long> uniqueCode_ptr=thrust::device_pointer_cast<long long>(uniqueCode);
+    thrust::device_ptr<long long> uniqueCode_end=thrust::copy_if(key_ptr,key_ptr+count,uniqueCode_ptr,markCompact());
     cudaDeviceSynchronize();
-    int uniqueCount_h=0;
-    thrust::host_vector<long long> uniqueCode_h=uniqueCode;
-    for(thrust::host_vector<long long>::iterator iter=uniqueCode_h.begin(); iter!=uniqueCode_h.end(); ++iter){
-        if(*iter==-1)
-            break;
-        ++uniqueCount_h;
-    }
-    uniqueCode.resize(uniqueCount_h);
+    cudaFree(key);
+
+    int uniqueCount_h=uniqueCode_end-uniqueCode_ptr;
 
     /**     Create uniqueNode according to uniqueCode   */
     OctNode *uniqueNode=NULL;
     nByte=sizeof(OctNode)*uniqueCount_h;
     CHECK(cudaMalloc((OctNode **)&uniqueNode,nByte));
-    long long *uniqueCode_ptr=thrust::raw_pointer_cast(&uniqueCode[0]);
-    initUniqueNode<<<grid,block>>>(uniqueCode_ptr,start_hashTable,count_hashTable,uniqueNode,uniqueCount_h);
+    initUniqueNode<<<grid,block>>>(uniqueCode,start_hashTable,count_hashTable,uniqueNode,uniqueCount_h);
     cudaDeviceSynchronize();
 
-//    nByte=sizeof(OctNode)*uniqueCount_h;
-//    OctNode *hh=(OctNode*) malloc(nByte);
-//    cudaMemcpy(hh,uniqueNode,nByte,cudaMemcpyDeviceToHost);
-//    for(int i=0;i<uniqueCount_h;++i){
-//        std::cout<<std::bitset<32>(hh[i].key)<<" pidx:"<<hh[i].pidx<<" pnum:"<<hh[i].pnum<<std::endl;
-//    }
+    destroy_hashtable(start_hashTable);
+    destroy_hashtable(count_hashTable);
 
     /**     Step 5: augment uniqueNode      */
     int *nodeNums=NULL;
@@ -415,14 +390,18 @@ int main() {
     CHECK(cudaMalloc((int **)&nodeAddress,nByte));
     CHECK(cudaMemset(nodeAddress,0,nByte));
 
-    generateNodeNums<<<grid,block>>>(uniqueCode_ptr,nodeNums,uniqueCount_h,maxDepth_h);
+    generateNodeNums<<<grid,block>>>(uniqueCode,nodeNums,uniqueCount_h,maxDepth_h);
     cudaDeviceSynchronize();
+
+    cudaFree(uniqueCode);
 
     thrust::device_ptr<int> nodeNums_ptr=thrust::device_pointer_cast<int>(nodeNums);
     thrust::device_ptr<int> nodeAddress_ptr=thrust::device_pointer_cast<int>(nodeAddress);
 
     thrust::inclusive_scan(nodeNums_ptr,nodeNums_ptr+uniqueCount_h,nodeAddress_ptr);
     cudaDeviceSynchronize();
+
+    cudaFree(nodeNums);
 
 
     /**     Step 6: create NodeArrayD       */
@@ -438,11 +417,18 @@ int main() {
     cudaDeviceSynchronize();
 
     /**     D-1     */
+    memset(BaseAddressArray,0,sizeof(int) * (maxDepth_h+1));
+    OctNode **NodeArrays=(OctNode **)malloc(sizeof(OctNode *) * (maxDepth_h+1));
+    NodeArrays[maxDepth_h]=NodeArrayD;
+
     OctNode *uniqueNode_D=uniqueNode;
     int *NodeAddress_D=nodeAddress;
     int uniqueCount_D=uniqueCount_h;
     int allNodeNums_D=allNodeNums;
     for(int depthD=maxDepth_h;depthD>=1;--depthD){
+//        printf("depthD:%d %d\n",depthD,allNodeNums_D);
+        NodeArrayCount_h[depthD]=allNodeNums_D;
+
         OctNode *uniqueNode_D_1=NULL,*NodeArray_D_1=NULL;
         int D_1Nums=allNodeNums_D/8;
         nByte=sizeof(OctNode) * D_1Nums;
@@ -475,35 +461,73 @@ int main() {
             NodeArray_D_1=uniqueNode_D_1;
         }
 
-        nByte=sizeof(OctNode) *uniqueCount_D_1;
-        OctNode *h=(OctNode*)malloc(nByte);
-        cudaMemcpy(h,uniqueNode_D_1,nByte,cudaMemcpyDeviceToHost);
-        for(int i=0;i<uniqueCount_D_1;++i){
-            std::cout<<std::bitset<32>(h[i].key)<<" pidx:"<<h[i].pidx<<" pnum:"<<h[i].pnum<<std::endl;
-        }
-        printf("%d %d\n",uniqueCount_D_1, allNodeNums_D_1);
+        NodeArrays[depthD-1]=NodeArray_D_1;
+
+//        nByte=sizeof(OctNode) *uniqueCount_D_1;
+//        OctNode *h=(OctNode*)malloc(nByte);
+//        cudaMemcpy(h,uniqueNode_D_1,nByte,cudaMemcpyDeviceToHost);
+//        for(int i=0;i<uniqueCount_D_1;++i){
+//            std::cout<<std::bitset<32>(h[i].key)<<" pidx:"<<h[i].pidx<<" pnum:"<<h[i].pnum<<std::endl;
+//        }
+//        printf("depth:%d uniqueNode:%d NodeArray:%d\n",depthD,uniqueCount_D_1, allNodeNums_D_1);
+
+        cudaFree(uniqueNode_D);
         uniqueNode_D=uniqueNode_D_1;
+        cudaFree(NodeAddress_D);
         NodeAddress_D=NodeAddress_D_1;
         uniqueCount_D=uniqueCount_D_1;
         allNodeNums_D=allNodeNums_D_1;
     }
 
+    NodeArrayCount_h[0]=1;
+    for(int i=1;i<=maxDepth_h;++i){
+        BaseAddressArray[i]=BaseAddressArray[i-1]+NodeArrayCount_h[i-1];
+//        printf("%d %d\n",BaseAddressArray[i],NodeArrayCount_h[i]);
+    }
 
+    nByte=sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]);
+//    printf("%d\n",BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]);
+    CHECK(cudaMalloc((OctNode **)&NodeArray,nByte));
+    for(int i=0;i<=maxDepth_h;++i){
+        CHECK(cudaMemcpy(NodeArray+BaseAddressArray[i],NodeArrays[i],sizeof(OctNode) * NodeArrayCount_h[i], cudaMemcpyDeviceToDevice ));
+        cudaFree(NodeArrays[i]);
+    }
+
+//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]));
+//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+//    for(int i=BaseAddressArray[2];i<BaseAddressArray[3];++i){
+//        std::cout<<std::bitset<32>(a[i].key)<<" pidx:"<<a[i].pidx<<" pnum:"<<a[i].pnum<<std::endl;
+//    }
 
     double ed=cpuSecond();
-    printf("Numbers of points:%d\nNumbers of uniqueCode:%d\n",count,uniqueCount_h);
-    printf("GPU:%lfs\n",ed-mid);
+    printf("GPU NodeArray build takes:%lfs",ed-mid);
 
-    cudaFree(key);
-    cudaFree(uniqueNode);
-    cudaFree(nodeNums);
-    cudaFree(nodeAddress);
-    cudaFree(NodeArrayD);
-//    cudaFree(uniqueNodeArrayD_1);
-//    free(NodeArrayD_1_h);
+}
 
-    destroy_hashtable(start_hashTable);
-    destroy_hashtable(count_hashTable);
 
+
+int main() {
+//    char fileName[]="/home/davidxu/horse.npts";
+    char fileName[]="/home/davidxu/bunny.points.ply";
+
+    int NodeArrayCount_h[maxDepth_h+1];
+    int BaseAddressArray[maxDepth_h+1];
+
+    Point3D<float> *samplePoints_d=NULL, *sampleNormals_d=NULL;
+    OctNode *NodeArray;
+
+    pipelineBuildNodeArray(fileName,
+                           NodeArrayCount_h,BaseAddressArray,
+                           samplePoints_d,sampleNormals_d,NodeArray );
+
+//    for(int i=0;i<=maxDepth_h;++i){
+//        printf("%d %d\n",NodeArrayCount_h[i],BaseAddressArray[i]);
+//    }
+//
+//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]));
+//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+//    for(int i=BaseAddressArray[2];i<BaseAddressArray[3];++i){
+//        std::cout<<std::bitset<32>(a[i].key)<<" pidx:"<<a[i].pidx<<" pnum:"<<a[i].pnum<<std::endl;
+//    }
 
 }
