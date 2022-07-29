@@ -351,6 +351,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
     cudaDeviceSynchronize();
 
     cudaFree(key_backup);
+    key_ptr=thrust::device_pointer_cast<long long>(key);
 
     KeyValue* start_hashTable=create_hashtable();
     KeyValue* count_hashTable=create_hashtable();
