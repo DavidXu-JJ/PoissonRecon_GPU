@@ -256,10 +256,11 @@ struct markCompact{
     }
 };
 
-__host__ void pipelineBuildNodeArray(char *fileName,
+__host__ void pipelineBuildNodeArray(char *fileName,int &count,
                                      int NodeArrayCount_h[maxDepth_h+1],int BaseAddressArray[maxDepth_h+1], //host
                                      Point3D<float> *&samplePoints_d,Point3D<float> *&sampleNormals_d,OctNode *&NodeArray)    //device
 {
+    count=0;
     PointStream<float>* pointStream;
     char* ext = GetFileExtension(fileName);
     if      (!strcasecmp(ext,"bnpts"))      pointStream = new BinaryPointStream<float>(fileName);
@@ -269,7 +270,6 @@ __host__ void pipelineBuildNodeArray(char *fileName,
     Point3D<float> position,normal;
     Point3D<float> mx,mn;
     Point3D<float> center;
-    int count=0;
 
     float scale=1;
     float scaleFactor=1.25;
@@ -346,10 +346,11 @@ __host__ void pipelineBuildNodeArray(char *fileName,
     thrust::sort_by_key(key_ptr,key_ptr+count,samplePoints_d);
     cudaDeviceSynchronize();
 
-    CHECK(cudaMemcpy(key,key_backup,nByte,cudaMemcpyDeviceToDevice));
-    cudaFree(key_backup);
+    key_ptr=thrust::device_pointer_cast<long long>(key_backup);
     thrust::sort_by_key(key_ptr,key_ptr+count,sampleNormals_d);
     cudaDeviceSynchronize();
+
+    cudaFree(key_backup);
 
     KeyValue* start_hashTable=create_hashtable();
     KeyValue* count_hashTable=create_hashtable();
@@ -507,16 +508,17 @@ __host__ void pipelineBuildNodeArray(char *fileName,
 
 
 int main() {
-//    char fileName[]="/home/davidxu/horse.npts";
-    char fileName[]="/home/davidxu/bunny.points.ply";
+    char fileName[]="/home/davidxu/horse.npts";
+//    char fileName[]="/home/davidxu/bunny.points.ply";
 
     int NodeArrayCount_h[maxDepth_h+1];
     int BaseAddressArray[maxDepth_h+1];
 
     Point3D<float> *samplePoints_d=NULL, *sampleNormals_d=NULL;
     OctNode *NodeArray;
+    int count=0;
 
-    pipelineBuildNodeArray(fileName,
+    pipelineBuildNodeArray(fileName,count,
                            NodeArrayCount_h,BaseAddressArray,
                            samplePoints_d,sampleNormals_d,NodeArray );
 
