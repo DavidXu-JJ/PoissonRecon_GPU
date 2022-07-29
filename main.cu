@@ -29,6 +29,13 @@ __constant__ int markOffset=31;
 const int markOffset_h=31;
 const int maxDepth_h=10;
 
+struct markCompact{
+    __host__ __device__
+    bool operator()(const long long x){
+        return ( x & (1ll<<markOffset) ) > 0;
+    }
+};
+
 __device__ long long encodePoint(const Point3D<float>& pos,const long long& idx){
     long long key=0ll;
     Point3D<float> myCenter;
@@ -171,16 +178,22 @@ __global__ void generateNodeKeyPidxHash(OctNode *uniqueNode,int uniqueCount,int 
     }
 }
 
-__global__ void generateUniqueNodeArrayD_1(OctNode *uniqueNode,int DSize,KeyValue *keyIndexHash,KeyValue *pidxHash,int depthD,OctNode *uniqueNodeArrayD_1){
+__global__ void generateUniqueNodeArrayD_1(OctNode *NodeArray_D,int DSize,KeyValue *keyIndexHash,KeyValue *pidxHash,int depthD,OctNode *uniqueNodeArrayD_1){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=offset;i<DSize;i+=stride){
-        int fatherKey=uniqueNode[i].key & (~ (7<< (3 * (maxDepth-depthD) ) ) );
+        if(NodeArray_D[i].pnum==0 && NodeArray_D[i].key==0){
+            continue;
+        }
+        int fatherKey=NodeArray_D[i].key & (~ (7<< (3 * (maxDepth-depthD) ) ) );
+        int sonKey = ( NodeArray_D[i].key >> (3 * (maxDepth-depthD)) ) & 7;
         int idx=find(keyIndexHash,fatherKey);
         uniqueNodeArrayD_1[idx].key=fatherKey;
-        atomicAdd(&uniqueNodeArrayD_1[idx].pnum,uniqueNode[i].pnum);
+        atomicAdd(&uniqueNodeArrayD_1[idx].pnum,NodeArray_D[i].pnum);
         uniqueNodeArrayD_1[idx].pidx = find(pidxHash,fatherKey);
+        NodeArray_D[i].parent=idx;
+        uniqueNodeArrayD_1[idx].children[sonKey]=i;
     }
 }
 
@@ -207,7 +220,7 @@ __global__ void generateNodeArrayD_1(OctNode *uniqueNodeArrayD_1,int *nodeAddres
     }
 }
 
-__host__ void pipelineUniqueNode_D_1(OctNode *uniqueNode_D,int *nodeAddress_D,int uniqueCount_D,int allNodeNums_D,int depthD,
+__host__ void pipelineUniqueNode_D_1(OctNode *uniqueNode_D,int *nodeAddress_D,int uniqueCount_D,OctNode *NodeArray_D,int allNodeNums_D,int depthD,
                                      OctNode *uniqueNode_D_1, int &uniqueCount_D_1)
 {
     uniqueCount_D_1=allNodeNums_D/8;
@@ -222,7 +235,7 @@ __host__ void pipelineUniqueNode_D_1(OctNode *uniqueNode_D,int *nodeAddress_D,in
     cudaDeviceSynchronize();
     generateNodeKeyPidxHash<<<grid,block>>>(uniqueNode_D,uniqueCount_D,depthD,pidxHash);
     cudaDeviceSynchronize();
-    generateUniqueNodeArrayD_1<<<grid,block>>>(uniqueNode_D,uniqueCount_D,keyIndexHash,pidxHash,depthD,uniqueNode_D_1);
+    generateUniqueNodeArrayD_1<<<grid,block>>>(NodeArray_D,allNodeNums_D,keyIndexHash,pidxHash,depthD,uniqueNode_D_1);
     cudaDeviceSynchronize();
     destroy_hashtable(keyIndexHash);
     destroy_hashtable(pidxHash);
@@ -249,15 +262,36 @@ void pipelineNodeAddress_D_1(OctNode *uniqueNode_D_1,int uniqueCount_D_1,int dep
     cudaFree(NodeNums_D_1);
 }
 
-struct markCompact{
-    __host__ __device__
-    bool operator()(const long long x){
-        return ( x & (1ll<<markOffset) ) > 0;
+__global__ void updateParentChildren(int *BaseAddressArray_d,OctNode *NodeArray,int size){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<size;i+=stride){
+        if(NodeArray[i].pnum == 0) continue;
+        int depth;
+        for(depth=0;depth<maxDepth_h;++depth){
+            if(BaseAddressArray_d[depth] <= i && BaseAddressArray_d[depth+1] > i){
+                break;
+            }
+        }
+        if(i == 0){
+            NodeArray[i].parent=-1;
+            for(int child=0;child<8;++child){
+                NodeArray[i].children[child] += BaseAddressArray_d[depth+1];
+            }
+        }else {
+            NodeArray[i].parent += BaseAddressArray_d[depth - 1];
+            for(int child=0;child<8;++child){
+                if(NodeArray[i].children[child]!=0)
+                    NodeArray[i].children[child] += BaseAddressArray_d[depth+1];
+            }
+        }
     }
-};
+}
+
 
 __host__ void pipelineBuildNodeArray(char *fileName,int &count,
-                                     int NodeArrayCount_h[maxDepth_h+1],int BaseAddressArray[maxDepth_h+1], //host
+                                     int NodeArrayCount_h[maxDepth_h+1],int BaseAddressArray_h[maxDepth_h+1], //host
                                      Point3D<float> *&samplePoints_d,Point3D<float> *&sampleNormals_d,OctNode *&NodeArray)    //device
 {
     count=0;
@@ -419,7 +453,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
     cudaDeviceSynchronize();
 
     /**     D-1     */
-    memset(BaseAddressArray,0,sizeof(int) * (maxDepth_h+1));
+    memset(BaseAddressArray_h,0,sizeof(int) * (maxDepth_h+1));
     OctNode **NodeArrays=(OctNode **)malloc(sizeof(OctNode *) * (maxDepth_h+1));
     NodeArrays[maxDepth_h]=NodeArrayD;
 
@@ -427,6 +461,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
     int *NodeAddress_D=nodeAddress;
     int uniqueCount_D=uniqueCount_h;
     int allNodeNums_D=allNodeNums;
+    OctNode *NodeArray_D=NodeArrayD;
     for(int depthD=maxDepth_h;depthD>=1;--depthD){
 //        printf("depthD:%d %d\n",depthD,allNodeNums_D);
         NodeArrayCount_h[depthD]=allNodeNums_D;
@@ -442,7 +477,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
         CHECK(cudaMemset(NodeAddress_D_1,0,nByte));
         int uniqueCount_D_1;
         int allNodeNums_D_1;
-        pipelineUniqueNode_D_1(uniqueNode_D,NodeAddress_D,uniqueCount_D,allNodeNums_D,depthD,
+        pipelineUniqueNode_D_1(uniqueNode_D,NodeAddress_D,uniqueCount_D,NodeArray_D,allNodeNums_D,depthD,
                                uniqueNode_D_1,uniqueCount_D_1);
         pipelineNodeAddress_D_1(uniqueNode_D_1,uniqueCount_D_1,depthD,
                                 NodeAddress_D_1);
@@ -464,6 +499,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
         }
 
         NodeArrays[depthD-1]=NodeArray_D_1;
+        NodeArray_D=NodeArray_D_1;
 
 //        nByte=sizeof(OctNode) *uniqueCount_D_1;
 //        OctNode *h=(OctNode*)malloc(nByte);
@@ -483,34 +519,54 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
 
     NodeArrayCount_h[0]=1;
     for(int i=1;i<=maxDepth_h;++i){
-        BaseAddressArray[i]=BaseAddressArray[i-1]+NodeArrayCount_h[i-1];
-//        printf("%d %d\n",BaseAddressArray[i],NodeArrayCount_h[i]);
+        BaseAddressArray_h[i]=BaseAddressArray_h[i-1]+NodeArrayCount_h[i-1];
+        printf("%d %d\n",BaseAddressArray_h[i],NodeArrayCount_h[i]);
     }
 
-    nByte=sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]);
+    int *NodeArrayCount_d=NULL;
+    nByte=sizeof(int)*(maxDepth_h+1);
+    CHECK(cudaMalloc((int **)&NodeArrayCount_d,nByte));
+    CHECK(cudaMemcpy(NodeArrayCount_d,NodeArrayCount_h,nByte,cudaMemcpyHostToDevice));
+    int *BaseAddressArray_d=NULL;
+    CHECK(cudaMalloc((int **)&BaseAddressArray_d,nByte));
+    CHECK(cudaMemcpy(BaseAddressArray_d,BaseAddressArray_h,nByte,cudaMemcpyHostToDevice));
+
+    nByte=sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]);
 //    printf("%d\n",BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]);
     CHECK(cudaMalloc((OctNode **)&NodeArray,nByte));
     for(int i=0;i<=maxDepth_h;++i){
-        CHECK(cudaMemcpy(NodeArray+BaseAddressArray[i],NodeArrays[i],sizeof(OctNode) * NodeArrayCount_h[i], cudaMemcpyDeviceToDevice ));
+        CHECK(cudaMemcpy(NodeArray+BaseAddressArray_h[i],NodeArrays[i],sizeof(OctNode) * NodeArrayCount_h[i], cudaMemcpyDeviceToDevice ));
         cudaFree(NodeArrays[i]);
     }
 
-//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]));
-//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
-//    for(int i=BaseAddressArray[2];i<BaseAddressArray[3];++i){
-//        std::cout<<std::bitset<32>(a[i].key)<<" pidx:"<<a[i].pidx<<" pnum:"<<a[i].pnum<<std::endl;
+    int NodeArray_sz=(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]);
+    updateParentChildren<<<grid,block>>>(BaseAddressArray_d,NodeArray,NodeArray_sz);
+    cudaDeviceSynchronize();
+
+//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
+//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+//    for(int j=0;j<4;++j) {
+//        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j+1]; ++i) {
+//            std::cout << std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
+//                      << a[i].parent << std::endl;
+//            for(int k=0;k<8;++k){
+//                printf("children[%d]:%d ",k,a[i].children[k]);
+//            }
+//            puts("");
+//        }
+//        std::cout<<std::endl;
 //    }
 
     double ed=cpuSecond();
-    printf("GPU NodeArray build takes:%lfs",ed-mid);
+    printf("GPU NodeArray build takes:%lfs\n",ed-mid);
 
 }
 
 
 
 int main() {
-    char fileName[]="/home/davidxu/horse.npts";
-//    char fileName[]="/home/davidxu/bunny.points.ply";
+//    char fileName[]="/home/davidxu/horse.npts";
+    char fileName[]="/home/davidxu/bunny.points.ply";
 
     int NodeArrayCount_h[maxDepth_h+1];
     int BaseAddressArray[maxDepth_h+1];
@@ -527,6 +583,7 @@ int main() {
 //        printf("%d %d\n",NodeArrayCount_h[i],BaseAddressArray[i]);
 //    }
 //
+
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]));
 //    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
 //    for(int i=BaseAddressArray[2];i<BaseAddressArray[3];++i){
