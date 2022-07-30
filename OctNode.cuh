@@ -12,7 +12,7 @@ public:
     int pnum;
     int parent;
     int children[8];
-    int neighs[3][3][3];
+    int neighs[27];
 };
 
 

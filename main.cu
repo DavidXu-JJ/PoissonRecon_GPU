@@ -26,10 +26,7 @@ __constant__ float ROUND_EPS=float(1e-5);
 __constant__ int maxDepth=10;
 __constant__ int markOffset=31;
 
-const int markOffset_h=31;
-const int maxDepth_h=10;
-
-int LUTparent[8][27]={
+__constant__ int LUTparent[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
         {1,1,2,4,4,5,4,4,5,10,10,11,13,13,14,13,13,14,10,10,11,13,13,14,13,13,14},
         {3,4,4,3,4,4,6,7,7,12,13,13,12,13,13,15,16,16,12,13,13,12,13,13,15,16,16},
@@ -39,7 +36,31 @@ int LUTparent[8][27]={
         {12,13,13,12,13,13,15,16,16,12,13,13,12,13,13,15,16,16,21,22,22,21,22,22,24,25,25},
         {13,13,14,13,13,14,16,16,17,13,13,14,13,13,14,16,16,17,22,22,23,22,22,23,25,25,26}
 };
-int LUTchild[8][27]={
+__constant__ int LUTchild[8][27]={
+        {7,6,7,5,4,5,7,6,7,3,2,3,1,0,1,3,2,3,7,6,7,5,4,5,7,6,7},
+        {6,7,6,4,5,4,6,7,6,2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6},
+        {5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5},
+        {4,5,4,6,7,6,4,5,4,0,1,0,2,3,2,0,1,0,4,5,4,6,7,6,4,5,4},
+        {3,2,3,1,0,1,3,2,3,7,6,7,5,4,5,7,6,7,3,2,3,1,0,1,3,2,3},
+        {2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6,6,7,2,0,1,0,2,3,2},
+        {1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1},
+        {0,1,0,2,3,2,0,1,0,4,5,4,6,7,6,4,5,4,0,1,0,2,3,2,0,1,0}
+};
+
+const int markOffset_h=31;
+const int maxDepth_h=10;
+
+int LUTparent_h[8][27]={
+        {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
+        {1,1,2,4,4,5,4,4,5,10,10,11,13,13,14,13,13,14,10,10,11,13,13,14,13,13,14},
+        {3,4,4,3,4,4,6,7,7,12,13,13,12,13,13,15,16,16,12,13,13,12,13,13,15,16,16},
+        {4,4,5,4,4,5,7,7,8,13,13,14,13,13,14,16,16,17,13,13,14,13,13,14,16,16,17},
+        {9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13,18,19,19,21,22,22,21,22,22},
+        {10,10,11,13,13,14,13,13,14,10,10,11,13,13,14,13,13,14,19,19,20,22,22,23,22,22,23},
+        {12,13,13,12,13,13,15,16,16,12,13,13,12,13,13,15,16,16,21,22,22,21,22,22,24,25,25},
+        {13,13,14,13,13,14,16,16,17,13,13,14,13,13,14,16,16,17,22,22,23,22,22,23,25,25,26}
+};
+int LUTchild_h[8][27]={
         {7,6,7,5,4,5,7,6,7,3,2,3,1,0,1,3,2,3,7,6,7,5,4,5,7,6,7},
         {6,7,6,4,5,4,6,7,6,2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6},
         {5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5},
@@ -310,6 +331,74 @@ __global__ void updateParentChildren(int *BaseAddressArray_d,OctNode *NodeArray,
     }
 }
 
+__global__ void updateEmptyNodeInfo(int *BaseAddressArray_d,OctNode *NodeArray,int size){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=1+8*offset;i<size;i+=8*stride){
+        int nowPIdx;
+        int validIdx;
+        int commonParent;
+        for(validIdx=0;validIdx<8;++validIdx){
+            if(NodeArray[i+validIdx].pnum!=0){
+                nowPIdx=NodeArray[i+validIdx].pidx;
+                commonParent=NodeArray[i+validIdx].parent;
+                break;
+            }
+        }
+        int depth;
+        for(depth=0;depth<maxDepth_h;++depth){
+            if(BaseAddressArray_d[depth] <= i && BaseAddressArray_d[depth+1] > i){
+                break;
+            }
+        }
+        int baseKey = NodeArray[i+validIdx].key - ( ( NodeArray[i+validIdx].key ) & ( 7 << (3 * (maxDepth-depth)) ) );
+
+        for(int j=0;j<8;++j){
+            int idx=i+j;
+            if(NodeArray[idx].pnum==0){
+                for(int k=0;k<8;++k){
+                    NodeArray[idx].children[k]=-1;
+                }
+            }else{
+                int basePos;
+                for(int k=0;k<8;++k){
+                    if(NodeArray[idx].children[k]>0){
+                        basePos=NodeArray[idx].children[k]-k;
+                        break;
+                    }
+                }
+                for(int k=0;k<8;++k){
+                    NodeArray[idx].children[k]=basePos+k;
+                }
+            }
+            NodeArray[idx].key = baseKey + ( j << (3 * (maxDepth-depth)) );
+            NodeArray[idx].pidx= nowPIdx;
+            nowPIdx += NodeArray[idx].pnum;
+
+            NodeArray[idx].parent=commonParent;
+
+        }
+    }
+}
+
+__global__ void computeNeighbor(OctNode *NodeArray,int left,int right,int depthD){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        for(int j=0;j<27;++j){
+            int sonKey = ( NodeArray[i].key >> (3 * (maxDepth-depthD)) ) & 7;
+            int parentIdx = NodeArray[i].parent;
+            if(NodeArray[ parentIdx ].neighs[LUTparent[sonKey][j]] != -1){
+                NodeArray[i].neighs[j] = NodeArray[ NodeArray[parentIdx].neighs[LUTparent[sonKey][j]] ].children[LUTchild[sonKey][j]];
+            }else{
+                NodeArray[i].neighs[j]= -1;
+            }
+        }
+    }
+}
 
 __host__ void pipelineBuildNodeArray(char *fileName,int &count,
                                      int NodeArrayCount_h[maxDepth_h+1],int BaseAddressArray_h[maxDepth_h+1], //host
@@ -564,14 +653,35 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
     updateParentChildren<<<grid,block>>>(BaseAddressArray_d,NodeArray,NodeArray_sz);
     cudaDeviceSynchronize();
 
+    updateEmptyNodeInfo<<<grid,block>>>(BaseAddressArray_d,NodeArray,NodeArray_sz);
+    cudaDeviceSynchronize();
+
+    int Node_0_Neighs[27];
+    for(int i=0;i<27;++i)
+        Node_0_Neighs[i]=-1;
+    Node_0_Neighs[13]=0;
+
+    CHECK(cudaMemcpy(NodeArray[0].neighs,Node_0_Neighs,sizeof(int) * 27,cudaMemcpyHostToDevice));
+
+
+    for(int depth=1;depth<=maxDepth_h;++depth){
+        computeNeighbor<<<grid,block>>>(NodeArray,BaseAddressArray_h[depth],BaseAddressArray_h[depth]+NodeArrayCount_h[depth],depth);
+        cudaDeviceSynchronize();
+    }
+
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
 //    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
 //    for(int j=0;j<4;++j) {
 //        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j+1]; ++i) {
+//            if(a[i].pnum==0) continue;
 //            std::cout << std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
 //                      << a[i].parent << std::endl;
 //            for(int k=0;k<8;++k){
 //                printf("children[%d]:%d ",k,a[i].children[k]);
+//            }
+//            puts("");
+//            for(int k=0;k<27;++k){
+//                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
 //            }
 //            puts("");
 //        }
