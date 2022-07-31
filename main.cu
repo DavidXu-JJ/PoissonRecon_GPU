@@ -52,6 +52,7 @@ __constant__ int LUTchild[8][27]={
 
 const int markOffset_h=31;
 const int maxDepth_h=9;
+const int normalize=0;
 
 int LUTparent_h[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
@@ -733,6 +734,28 @@ __host__ void getFunctionIdxOfNode(const int& key,int depthD,int idx[3]){
     }
 }
 
+__device__ double F_center_width_Point(const PPolynomial<2> &BaseFunction_d,const Point3D<float> &center,const float &width,const Point3D<float> point){
+//    PPolynomial<2> thisFunction_X= BaseFunction_d.scale(width).shift(center.coords[0]);
+}
+
+__global__ void computeDivergenceVector(PPolynomial<2> *BaseFunction_d,Point3D<float> *sampleNormals_d,OctNode *NodeArray,int left,int right,int depthD,double *DivergenceV){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        for(int j=0;j<27;++j){
+            int neigh=NodeArray[i].neighs[j];
+            if(neigh!=-1){
+                for(int k=0;k<NodeArray[neigh].pnum;++k){
+                    int pointIdx=NodeArray[neigh].pidx+k;
+//                    DivergenceV[i] += sampleNormals_d[pointIdx] *
+                }
+
+            }
+        }
+    }
+}
 
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
@@ -770,11 +793,27 @@ int main() {
 
     PPolynomial<2> ReconstructionFunction = PPolynomial<2>::GaussianApproximation();
     FunctionData<2,double> fData;
-    fData.set(maxDepth_h,ReconstructionFunction,0,0);
+    fData.set(maxDepth_h,ReconstructionFunction,normalize,0);
     //  precomputed inner product table may can be optimized to GPU parallel
     fData.setDotTables(fData.DOT_FLAG | fData.D_DOT_FLAG | fData.D2_DOT_FLAG);
+    PPolynomial<2> &F=ReconstructionFunction;
+    switch(normalize){
+        case 2:
+            F=F/sqrt((F*F).integral(F.polys[0].start,F.polys[F.polyCount-1].start));
+            break;
+        case 1:
+            F=F/F.integral(F.polys[0].start,F.polys[F.polyCount-1].start);
+            break;
+        default:
+            F=F/F(0);
+    }
 
-    int nByte=sizeof(double) * fData.res * fData.res;
+    int nByte=sizeof(ReconstructionFunction);
+    PPolynomial<2> *BaseFunction_d = NULL;
+    CHECK(cudaMalloc((PPolynomial<2>**)&BaseFunction_d,nByte));
+    CHECK(cudaMemcpy(BaseFunction_d,&ReconstructionFunction,nByte,cudaMemcpyHostToDevice));
+
+    nByte=sizeof(double) * fData.res * fData.res;
     double *dot_F_DF=NULL;
     CHECK(cudaMalloc((double **)&dot_F_DF,nByte));
     CHECK(cudaMemcpy(dot_F_DF,fData.dotTable,nByte,cudaMemcpyHostToDevice));
