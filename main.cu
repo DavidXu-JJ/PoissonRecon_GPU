@@ -18,6 +18,7 @@
 #include "Hash.cuh"
 #include "PPolynomial.cuh"
 #include "FunctionData.cuh"
+#include "BinaryNode.cuh"
 
 
 //#define FORCE_UNIT_NORMALS 1
@@ -285,8 +286,8 @@ __host__ void pipelineUniqueNode_D_1(OctNode *uniqueNode_D,int *nodeAddress_D,in
     destroy_hashtable(pidxHash);
 }
 
-void pipelineNodeAddress_D_1(OctNode *uniqueNode_D_1,int uniqueCount_D_1,int depthD,
-                             int *NodeAddress_D_1)
+__host__ void pipelineNodeAddress_D_1(OctNode *uniqueNode_D_1,int uniqueCount_D_1,int depthD,
+                                      int *NodeAddress_D_1)
 {
     dim3 grid=(32,32);
     dim3 block=(32,32);
@@ -465,6 +466,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
         ++idx;
     }
 
+    //  input process may can be optimized as GPU parallel
     double mid=cpuSecond();
     printf("Total points number:%d ,Read takes:%lfs\n",count,mid-st);
 
@@ -695,6 +697,29 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
 
 }
 
+__host__ int getDepth(const int& idxOfNodeArray,int *BaseAddressArray){
+    int depth;
+    for(depth=0;depth<maxDepth_h;++depth){
+        if(BaseAddressArray[depth] <= idxOfNodeArray && BaseAddressArray[depth+1] > idxOfNodeArray){
+            break;
+        }
+    }
+    return depth;
+}
+
+__host__ void getFunctionIdxOfNode(const int& key,int depthD,int idx[3]){
+    idx[0]=BinaryNode<float>::CumulativeCenterCount(depthD-1);
+    idx[1]=idx[0];
+    idx[2]=idx[1];
+    for(int depth=depthD;depth >= 1;--depth){
+        int sonKeyX = ( key >> (3 * (maxDepth_h-depth) + 2) ) & 1;
+        int sonKeyY = ( key >> (3 * (maxDepth_h-depth) + 1) ) & 1;
+        int sonKeyZ = ( key >> (3 * (maxDepth_h-depth)) ) & 1;
+        idx[0] += sonKeyX * (1<<(depthD-depth));
+        idx[1] += sonKeyY * (1<<(depthD-depth));
+        idx[2] += sonKeyZ * (1<<(depthD-depth));
+    }
+}
 
 
 int main() {
@@ -715,15 +740,36 @@ int main() {
 //    for(int i=0;i<=maxDepth_h;++i){
 //        printf("%d %d\n",NodeArrayCount_h[i],BaseAddressArray[i]);
 //    }
-//
+
 
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]));
 //    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
-//    for(int i=BaseAddressArray[2];i<BaseAddressArray[3];++i){
+//    for(int i=BaseAddressArray[1];i<BaseAddressArray[3];++i){
 //        std::cout<<std::bitset<32>(a[i].key)<<" pidx:"<<a[i].pidx<<" pnum:"<<a[i].pnum<<std::endl;
+//        int idx[3];
+//        getFunctionIdxOfNode(a[i].key, getDepth(i,BaseAddressArray),idx);
+//        std::cout<<getDepth(i,BaseAddressArray)<<std::endl;
+//        for(int j=0;j<3;++j){
+//            printf("idx[%d]:%d ",j,idx[j]);
+//        }
+//        puts("");
 //    }
 
     PPolynomial<2> ReconstructionFunction = PPolynomial<2>::GaussianApproximation();
     FunctionData<2,double> fData;
-    fData.set(maxDepth_h,ReconstructionFunction,0,1);
+    fData.set(maxDepth_h,ReconstructionFunction,0,0);
+    //  precomputed inner product table may can be optimized to GPU parallel
+    fData.setDotTables(fData.DOT_FLAG | fData.D_DOT_FLAG | fData.D2_DOT_FLAG);
+
+    int nByte=sizeof(double) * fData.res * fData.res;
+    double *dot_F_DF=NULL;
+    CHECK(cudaMalloc((double **)&dot_F_DF,nByte));
+    CHECK(cudaMemcpy(dot_F_DF,fData.dotTable,nByte,cudaMemcpyHostToDevice));
+
+    double *dot_F_D2F=NULL;
+    CHECK(cudaMalloc((double **)&dot_F_D2F,nByte));
+    CHECK(cudaMemcpy(dot_F_D2F,fData.d2DotTable,nByte,cudaMemcpyHostToDevice));
+
+
+
 }
