@@ -783,8 +783,9 @@ int main() {
     CHECK(cudaMalloc((double **)&dot_F_D2F,nByte));
     CHECK(cudaMemcpy(dot_F_D2F,fData.d2DotTable,nByte,cudaMemcpyHostToDevice));
 
-    double DivergenceV=NULL;
+    double *DivergenceV=NULL;
     nByte=sizeof(double) * NodeArray_sz;
-
+    CHECK(cudaMalloc((double **)&DivergenceV,nByte));
+    CHECK(cudaMemset(DivergenceV,0,nByte));
 
 }
