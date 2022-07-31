@@ -12,7 +12,12 @@ add_executable(GPU_PoissonRecon main.cu
         CmdLineParser.cuh CmdLineParser.inl CmdLineParser.cu
         Geometry.cuh Geometry.inl Geometry.cu
         plyfile.cu PlyFile.cuh PointStream.cuh PointStream.inl
-        Debug.cuh OctNode.cuh Hash.cuh)
+        Debug.cuh OctNode.cuh Hash.cuh
+        BinaryNode.cuh
+        Factor.cu Factor.cuh
+        Polynomial.cuh Polynomial.inl
+        PPolynomial.cuh PPolynomial.inl
+        FunctionData.cuh FunctionData.inl)
 
 set_target_properties(GPU_PoissonRecon PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)

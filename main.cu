@@ -16,6 +16,8 @@
 #include "thrust/sort.h"
 #include "thrust/copy.h"
 #include "Hash.cuh"
+#include "PPolynomial.cuh"
+#include "FunctionData.cuh"
 
 
 //#define FORCE_UNIT_NORMALS 1
@@ -23,7 +25,7 @@
 // make readable to device  ?
 __constant__ float EPSILON=float(1e-6);
 __constant__ float ROUND_EPS=float(1e-5);
-__constant__ int maxDepth=10;
+__constant__ int maxDepth=9;
 __constant__ int markOffset=31;
 
 __constant__ int LUTparent[8][27]={
@@ -48,7 +50,7 @@ __constant__ int LUTchild[8][27]={
 };
 
 const int markOffset_h=31;
-const int maxDepth_h=10;
+const int maxDepth_h=9;
 
 int LUTparent_h[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
@@ -630,7 +632,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,
     NodeArrayCount_h[0]=1;
     for(int i=1;i<=maxDepth_h;++i){
         BaseAddressArray_h[i]=BaseAddressArray_h[i-1]+NodeArrayCount_h[i-1];
-        printf("%d %d\n",BaseAddressArray_h[i],NodeArrayCount_h[i]);
+//        printf("%d %d\n",BaseAddressArray_h[i],NodeArrayCount_h[i]);
     }
 
     int *NodeArrayCount_d=NULL;
@@ -721,4 +723,7 @@ int main() {
 //        std::cout<<std::bitset<32>(a[i].key)<<" pidx:"<<a[i].pidx<<" pnum:"<<a[i].pnum<<std::endl;
 //    }
 
+    PPolynomial<2> ReconstructionFunction = PPolynomial<2>::GaussianApproximation();
+    FunctionData<2,double> fData;
+    fData.set(maxDepth_h,ReconstructionFunction,0,1);
 }
