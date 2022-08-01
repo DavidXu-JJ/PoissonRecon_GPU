@@ -144,14 +144,6 @@ __global__ void generateCountHash(long long *key,KeyValue *hashTable,int size){
     }
 }
 
-__global__ void generateHashTable(int *keyValue,KeyValue *hashTable,int size){
-    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
-    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
-    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    for(int i=offset;i<size;i+=stride){
-        insert(hashTable,keyValue[i],keyValue[i+size]);
-    }
-}
 
 __global__ void generateMark(long long *code,int size){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -194,12 +186,34 @@ __global__ void generateNodeNums(long long* uniqueCode,int *nodeNums,int size,in
 }
 
 
-__global__ void generateNodeArrayD(OctNode *uniqueNode,int *nodeAddress, OctNode *NodeArray,int size){
+__global__ void generateNodeArrayD(OctNode *uniqueNode,int *nodeAddress, OctNode *NodeArrayD,int size){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=offset;i<size;i+=stride){
-        NodeArray[nodeAddress[i] + ( uniqueNode[i].key & 7) ] = uniqueNode[i];
+        int idx=nodeAddress[i] + ( uniqueNode[i].key & 7);
+        NodeArrayD[idx] = uniqueNode[i];
+    }
+}
+
+__global__ void initNodeArrayD_DIdxDnum(OctNode *NodeArrayD,int size){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<size;i+=stride){
+        NodeArrayD[i].dnum = 1;
+        NodeArrayD[i].didx = i;
+    }
+
+}
+
+__global__ void parallelSet0xff(OctNode *uniqueNode_D_1,int size){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<size;i+=stride) {
+        uniqueNode_D_1[i].pidx=0x7fffffff;
+        uniqueNode_D_1[i].didx=0x7fffffff;
     }
 }
 
@@ -214,30 +228,38 @@ __global__ void generateNodeKeyIndexHash(OctNode *uniqueNode,int *nodeAddress,in
     }
 }
 
-__global__ void generateNodeKeyPidxHash(OctNode *uniqueNode,int uniqueCount,int depthD,KeyValue *pidxHash){
-    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
-    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
-    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    for(int i=offset;i<uniqueCount;i+=stride){
-        int fatherKey=uniqueNode[i].key & (~ (7<< (3 * (maxDepth-depthD) ) ) );
-        insertMin(pidxHash,fatherKey, uniqueNode[i].pidx);
-    }
-}
 
-__global__ void generateUniqueNodeArrayD_1(OctNode *NodeArray_D,int DSize,KeyValue *keyIndexHash,KeyValue *pidxHash,int depthD,OctNode *uniqueNodeArrayD_1,KeyValue *uniqueNode_D_1_Idx_To_NodeArray_D_Idx){
+
+__global__ void generateUniqueNodeArrayD_1(OctNode *NodeArray_D,int DSize,KeyValue *keyIndexHash,int depthD,OctNode *uniqueNodeArrayD_1,KeyValue *uniqueNode_D_1_Idx_To_NodeArray_D_Idx){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=offset;i<DSize;i+=stride){
-        if(NodeArray_D[i].pnum==0 && NodeArray_D[i].key==0){
+        if(NodeArray_D[i].pnum==0){
+            int st = i-i%8;
+            int valid_idx;
+            for(int j=0;j<8;++j){
+                valid_idx = st+j;
+                if(NodeArray_D[valid_idx].pnum != 0){
+                    break;
+                }
+            }
+            int fatherKey=NodeArray_D[valid_idx].key & (~ (7<< (3 * (maxDepth-depthD) ) ) );
+            int idx=find(keyIndexHash,fatherKey);
+            if(NodeArray_D[i].dnum!=0) {
+                atomicAdd(&uniqueNodeArrayD_1[idx].dnum, NodeArray_D[i].dnum);
+                atomicMin(&uniqueNodeArrayD_1[idx].didx, NodeArray_D[i].didx);
+            }
             continue;
         }
         int fatherKey=NodeArray_D[i].key & (~ (7<< (3 * (maxDepth-depthD) ) ) );
-        int sonKey = ( NodeArray_D[i].key >> (3 * (maxDepth-depthD)) ) & 7;
         int idx=find(keyIndexHash,fatherKey);
+        int sonKey = ( NodeArray_D[i].key >> (3 * (maxDepth-depthD)) ) & 7;
         uniqueNodeArrayD_1[idx].key=fatherKey;
         atomicAdd(&uniqueNodeArrayD_1[idx].pnum,NodeArray_D[i].pnum);
-        uniqueNodeArrayD_1[idx].pidx = find(pidxHash,fatherKey);
+        atomicMin(&uniqueNodeArrayD_1[idx].pidx,NodeArray_D[i].pidx);
+        atomicAdd(&uniqueNodeArrayD_1[idx].dnum,NodeArray_D[i].dnum);
+        atomicMin(&uniqueNodeArrayD_1[idx].didx,NodeArray_D[i].didx);
         insert(uniqueNode_D_1_Idx_To_NodeArray_D_Idx,idx,i);
         uniqueNodeArrayD_1[idx].children[sonKey]=i;
     }
@@ -280,16 +302,14 @@ __host__ void pipelineUniqueNode_D_1(OctNode *uniqueNode_D,int *nodeAddress_D,in
 //    CHECK(cudaMalloc((OctNode **)&uniqueNode_D_1,nByte));
 //    CHECK(cudaMemset(uniqueNode_D_1,0,nByte));
     KeyValue *keyIndexHash=create_hashtable();
-    KeyValue *pidxHash=create_hashtable();
     dim3 grid=(32,32);
     dim3 block=(32,32);
+    parallelSet0xff<<<grid,block>>>(uniqueNode_D_1,uniqueCount_D_1);
     generateNodeKeyIndexHash<<<grid,block>>>(uniqueNode_D,nodeAddress_D,uniqueCount_D,depthD,keyIndexHash);
-    generateNodeKeyPidxHash<<<grid,block>>>(uniqueNode_D,uniqueCount_D,depthD,pidxHash);
     cudaDeviceSynchronize();
-    generateUniqueNodeArrayD_1<<<grid,block>>>(NodeArray_D,allNodeNums_D,keyIndexHash,pidxHash,depthD,uniqueNode_D_1,uniqueNode_D_1_Idx_To_NodeArray_D_Idx);
+    generateUniqueNodeArrayD_1<<<grid,block>>>(NodeArray_D,allNodeNums_D,keyIndexHash,depthD,uniqueNode_D_1,uniqueNode_D_1_Idx_To_NodeArray_D_Idx);
     cudaDeviceSynchronize();
     destroy_hashtable(keyIndexHash);
-    destroy_hashtable(pidxHash);
 }
 
 __host__ void pipelineNodeAddress_D_1(OctNode *uniqueNode_D_1,int uniqueCount_D_1,int depthD,
@@ -346,11 +366,13 @@ __global__ void updateEmptyNodeInfo(int *BaseAddressArray_d,OctNode *NodeArray,i
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=1+8*offset;i<size;i+=8*stride){
         int nowPIdx;
+        int nowDIdx;
         int validIdx;
         int commonParent;
         for(validIdx=0;validIdx<8;++validIdx){
             if(NodeArray[i+validIdx].pnum!=0){
                 nowPIdx=NodeArray[i+validIdx].pidx;
+                nowDIdx=NodeArray[i+validIdx].didx;
                 commonParent=NodeArray[i+validIdx].parent;
                 break;
             }
@@ -382,8 +404,12 @@ __global__ void updateEmptyNodeInfo(int *BaseAddressArray_d,OctNode *NodeArray,i
                 }
             }
             NodeArray[idx].key = baseKey + ( j << (3 * (maxDepth-depth)) );
+
             NodeArray[idx].pidx= nowPIdx;
             nowPIdx += NodeArray[idx].pnum;
+
+            NodeArray[idx].didx= nowDIdx;
+            nowDIdx += NodeArray[idx].dnum;
 
             NodeArray[idx].parent=commonParent;
 
@@ -530,6 +556,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
     OctNode *uniqueNode=NULL;
     nByte=sizeof(OctNode)*uniqueCount_h;
     CHECK(cudaMalloc((OctNode **)&uniqueNode,nByte));
+    CHECK(cudaMemset(uniqueNode,0,nByte));
     initUniqueNode<<<grid,block>>>(uniqueCode,start_hashTable,count_hashTable,uniqueNode,uniqueCount_h);
     cudaDeviceSynchronize();
 
@@ -570,6 +597,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
     CHECK(cudaMalloc((OctNode **)&NodeArrayD, nByte));
     CHECK(cudaMemset(NodeArrayD,0,nByte));
     generateNodeArrayD<<<grid,block>>>(uniqueNode,nodeAddress,NodeArrayD,uniqueCount_h);
+    initNodeArrayD_DIdxDnum<<<grid,block>>>(NodeArrayD,allNodeNums);
     cudaDeviceSynchronize();
 
     /**     D-1     */
@@ -644,7 +672,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
     NodeArrayCount_h[0]=1;
     for(int i=1;i<=maxDepth_h;++i){
         BaseAddressArray_h[i]=BaseAddressArray_h[i-1]+NodeArrayCount_h[i-1];
-//        printf("%d %d\n",BaseAddressArray_h[i],NodeArrayCount_h[i]);
+        printf("%d %d\n",BaseAddressArray_h[i],NodeArrayCount_h[i]);
     }
 
     nByte=sizeof(int)*(maxDepth_h+1);
@@ -688,10 +716,10 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
 //    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
 //    for(int j=0;j<4;++j) {
-//        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j+1]; ++i) {
+//        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j]+NodeArrayCount_h[j]; ++i) {
 ////            if(a[i].pnum==0) continue;
 //            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
-//                      << a[i].parent << std::endl;
+//                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
 //            for(int k=0;k<8;++k){
 //                printf("children[%d]:%d ",k,a[i].children[k]);
 //            }
@@ -734,9 +762,12 @@ __host__ __device__ void getFunctionIdxOfNode(const int& key,int depthD,int idx[
 }
 
 __device__ double F_center_width_Point(const PPolynomial<2> &BaseFunction_d,const Point3D<float> &center,const float &width,const Point3D<float> &point){
-    PPolynomial<2> thisFunction_X = BaseFunction_d.scale(width).shift(center.coords[0]);
-    PPolynomial<2> thisFunction_Y = BaseFunction_d.scale(width).shift(center.coords[1]);
-    PPolynomial<2> thisFunction_Z = BaseFunction_d.scale(width).shift(center.coords[2]);
+//    PPolynomial<2> thisFunction_X = BaseFunction_d.scale(width).shift(center.coords[0]);
+//    PPolynomial<2> thisFunction_Y = BaseFunction_d.scale(width).shift(center.coords[1]);
+//    PPolynomial<2> thisFunction_Z = BaseFunction_d.scale(width).shift(center.coords[2]);
+    PPolynomial<2> thisFunction_X = BaseFunction_d.shift(center.coords[0]);
+    PPolynomial<2> thisFunction_Y = BaseFunction_d.shift(center.coords[1]);
+    PPolynomial<2> thisFunction_Z = BaseFunction_d.shift(center.coords[2]);
     return thisFunction_X(point.coords[0]) * thisFunction_Y(point.coords[1]) * thisFunction_Z(point.coords[2]);
 }
 
@@ -753,12 +784,13 @@ __global__ void computeVectorField(PPolynomial<2> *BaseFunction_d,Point3D<float>
         BinaryNode<float>::CenterAndWidth(idx[0],o_c.coords[0],width);
         BinaryNode<float>::CenterAndWidth(idx[1],o_c.coords[1],width);
         BinaryNode<float>::CenterAndWidth(idx[2],o_c.coords[2],width);
+        const PPolynomial<2> BaseFunction=BaseFunction_d->scale(width);
         for(int j=0;j<27;++j){
             int neigh=NodeArray[i].neighs[j];
             if(neigh!=-1){
                 for(int k=0;k<NodeArray[neigh].pnum;++k){
                     int pointIdx=NodeArray[neigh].pidx+k;
-                    double weight= F_center_width_Point(*BaseFunction_d,samplePoints_d[pointIdx],width,o_c);
+                    double weight= F_center_width_Point(BaseFunction,samplePoints_d[pointIdx],width,o_c);
                     int IdxInMaxDepth=i-left;
                     VectorField[IdxInMaxDepth].coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
                     VectorField[IdxInMaxDepth].coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
@@ -804,7 +836,8 @@ int main() {
 //        puts("");
 //    }
 
-    double st=cpuSecond();
+
+    double cpu_st=cpuSecond();
 
     PPolynomial<2> ReconstructionFunction = PPolynomial<2>::GaussianApproximation();
     FunctionData<2,double> fData;
@@ -837,11 +870,15 @@ int main() {
     CHECK(cudaMalloc((double **)&dot_F_D2F,nByte));
     CHECK(cudaMemcpy(dot_F_D2F,fData.d2DotTable,nByte,cudaMemcpyHostToDevice));
 
+    double cpu_ed=cpuSecond();
+    printf("CPU generate precomputed inner product table takes:",cpu_ed-cpu_st);
+
     Point3D<float> *VectorField=NULL;
     nByte=sizeof(Point3D<float>) * NodeArrayCount_h[maxDepth_h];
     CHECK(cudaMalloc((Point3D<float> **)&VectorField,nByte));
     CHECK(cudaMemset(VectorField,0,nByte));
 
+    double st=cpuSecond();
     dim3 grid=(32,32);
     dim3 block(32,32);
     computeVectorField<<<grid,block>>>(BaseFunction_d,samplePoints_d,sampleNormals_d,

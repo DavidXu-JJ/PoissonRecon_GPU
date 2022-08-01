@@ -13,6 +13,8 @@ public:
     int parent;
     int children[8];
     int neighs[27];
+    int didx;
+    int dnum;
 };
 
 
