@@ -36,48 +36,48 @@ class Polynomial{
 public:
     double coefficients[Degree+1];
 
-    Polynomial(void);
+    __host__ __device__ Polynomial(void);
     template<int Degree2>
-    Polynomial(const Polynomial<Degree2>& P);
+    __host__ __device__ Polynomial(const Polynomial<Degree2>& P);
 
     /**     calculate the value of f(t)	    */
-    double operator()(const double& t) const;
+    __host__ __device__ double operator()(const double& t) const;
 
     /**     calculate the definite integral tMin/tMax [f(x)dx]
       *     tMin can be bigger than tMax	*/
-    double integral(const double& tMin,const double& tMax) const;
+    __host__ __device__ double integral(const double& tMin,const double& tMax) const;
 
-    int operator == (const Polynomial& p) const;
-    int operator != (const Polynomial& p) const;
-    int isZero(void) const;
-    void setZero(void);
+    __host__ __device__ int operator == (const Polynomial& p) const;
+    __host__ __device__ int operator != (const Polynomial& p) const;
+    __host__ __device__ int isZero(void) const;
+    __host__ __device__ void setZero(void);
 
     template<int Degree2>
-    Polynomial& operator  = (const Polynomial<Degree2> &p);
-    Polynomial& operator += (const Polynomial& p);
-    Polynomial& operator -= (const Polynomial& p);
-    Polynomial  operator -  (void) const;
-    Polynomial  operator +  (const Polynomial& p) const;
-    Polynomial  operator -  (const Polynomial& p) const;
+    __host__ __device__ Polynomial& operator  = (const Polynomial<Degree2> &p);
+    __host__ __device__ Polynomial& operator += (const Polynomial& p);
+    __host__ __device__ Polynomial& operator -= (const Polynomial& p);
+    __host__ __device__ Polynomial  operator -  (void) const;
+    __host__ __device__ Polynomial  operator +  (const Polynomial& p) const;
+    __host__ __device__ Polynomial  operator -  (const Polynomial& p) const;
 
     /**     Polynomial multiplication	*/
     template<int Degree2>
-    Polynomial<Degree+Degree2>  operator *  (const Polynomial<Degree2>& p) const;
+    __host__ __device__ Polynomial<Degree+Degree2>  operator *  (const Polynomial<Degree2>& p) const;
 
-    Polynomial& operator += (const double& s);
-    Polynomial& operator -= (const double& s);
-    Polynomial& operator *= (const double& s);
-    Polynomial& operator /= (const double& s);
-    Polynomial  operator +  (const double& s) const;
-    Polynomial  operator -  (const double& s) const;
+    __host__ __device__ Polynomial& operator += (const double& s);
+    __host__ __device__ Polynomial& operator -= (const double& s);
+    __host__ __device__ Polynomial& operator *= (const double& s);
+    __host__ __device__ Polynomial& operator /= (const double& s);
+    __host__ __device__ Polynomial  operator +  (const double& s) const;
+    __host__ __device__ Polynomial  operator -  (const double& s) const;
     /**     scale the coefficients	*/
-    Polynomial  operator *  (const double& s) const;
-    Polynomial  operator /  (const double& s) const;
+    __host__ __device__ Polynomial  operator *  (const double& s) const;
+    __host__ __device__ Polynomial  operator /  (const double& s) const;
 
     /**     100.0000 x^0 +100.0000 x^1 +100.0000 x^2 (original doesn't change)
       *     scale(10.0) =>
       *     100.0000 x^0 +10.0000 x^1 +1.0000 x^2                    */
-    Polynomial scale(const double& s) const;
+    __host__ __device__ Polynomial scale(const double& s) const;
 
     /**     f(x) -> f(x-t)
       *     1.0000 x^0 +1.0000 x^1 +1.0000 x^2 +1.0000 x^3  =>
@@ -86,60 +86,60 @@ public:
       *     1    -   2x  +   x^2
       *     -1    +   3x  -   3x^2    +   x^3
       *     => 0.0000 x^0 +2.0000 x^1 -2.0000 x^2 +1.0000 x^3       */
-    Polynomial shift(const double& t) const;
+    __host__ __device__ Polynomial shift(const double& t) const;
 
     /**     f(x) -> f'(x)
       *     1.0000 x^0 +1.0000 x^1 +1.0000 x^2 +1.0000 x^3
       *     => derivative
       *     1.0000 x^0 +2.0000 x^1 +3.0000 x^2	                    */
-    Polynomial<Degree-1> derivative(void) const;
+    __host__ __device__ Polynomial<Degree-1> derivative(void) const;
 
     /**     calculate indefinite integral and let C = 0
       *     f(x) -> /f(x)dx
       *     1.0000 x^0 +2.0000 x^1 +3.0000 x^2 +4.0000 x^3
       *     => integral
       *     0.0000 x^0 +1.0000 x^1 +1.0000 x^2 +1.0000 x^3 +1.0000 x^4	*/
-    Polynomial<Degree+1> integral(void) const;
+    __host__ __device__ Polynomial<Degree+1> integral(void) const;
 
     /** output  */
-    void printnl(void) const;
+    __host__ __device__ void printnl(void) const;
 
     /**     add *this with scale * p (original is changed)
       *     1.0000 x^0 +1.0000 x^1 +1.0000 x^2 +1.0000 x^3
       *     a->addScaled(*a,10);
       *     11.0000 x^0 +11.0000 x^1 +11.0000 x^2 +11.0000 x^3	    */
-    Polynomial& addScaled(const Polynomial& p,const double& scale);
+    __host__ __device__ Polynomial& addScaled(const Polynomial& p,const double& scale);
 
     /**     $out will be erased, $out will be assigned with -$in
       *     Polynomial<Degree>::Negate will take only x^0 to x^Degree item of -$in
       *     $out must be Polynomial<Degree> , $in can be arbitrary	*/
-    static void Negate(const Polynomial& in,Polynomial& out);
+    __host__ __device__ static void Negate(const Polynomial& in,Polynomial& out);
 
     /**     $q will be erased, $q will be assigned with $p1 - $p2
       *     Polynomial<Degree>::Subtract will take only x^0 to x^$Degree item of $p1 and $p2
       *     $q must be Polynomial<Degree>, $p1 and $p2 can be arbitrary	*/
-    static void Subtract(const Polynomial& p1,const Polynomial& p2,Polynomial& q);
+    __host__ __device__ static void Subtract(const Polynomial& p1,const Polynomial& p2,Polynomial& q);
 
     /**     $q will be erased, $q will be assigned with $w * $p
       *     Polynomial<Degree>::Scale will take only x^0 to x^$Degree item of $p
       *     $q must be Polynomial<Degree>, $p can be arbitrary	    */
-    static void Scale(const Polynomial& p,const double& w,Polynomial& q);
+    __host__ __device__ static void Scale(const Polynomial& p,const double& w,Polynomial& q);
 
     /**     $q will be erased, $q will be assigned with $w1 * $p1 + $w2 * $p2
       *     q.coefficients[i]=p1.coefficients[i]*w1+p2.coefficients[i]*w2	*/
-    static void AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,const double& w2,Polynomial& q);
+    __host__ __device__ static void AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,const double& w2,Polynomial& q);
 
     /**     $q will be erased, $q will be assigned with $p1 + $w2 * $p2	*/
-    static void AddScaled(const Polynomial& p1,const Polynomial& p2,const double& w2,Polynomial& q);
+    __host__ __device__ static void AddScaled(const Polynomial& p1,const Polynomial& p2,const double& w2,Polynomial& q);
 
     /**     $q will be erased, $q will be assigned with $w1 * $p1 + $p2	*/
-    static void AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,Polynomial& q);
+    __host__ __device__ static void AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,Polynomial& q);
 
     /**     solve the equations
       *     coefficients[0] x^0 + coefficients[1] x^1 + coefficients[2] x^2 + coefficients[3] x^3 = c
       *     roots will be erased, the real solution x will be saved in roots
       *     imaginary solution x will be eliminated                  */
-    void getSolutions(const double& c,std::vector<double>& roots,const double& EPS) const;
+    __host__ __device__ void getSolutions(const double& c,std::vector<double>& roots,const double& EPS) const;
 };
 
 #include "Polynomial.inl"

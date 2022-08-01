@@ -30,45 +30,61 @@ DAMAGE.
 #include <cmath>
 #include <algorithm>
 #include "Factor.cuh"
+#include "cuda.h"
 
 ////////////////
 // Polynomial //
 ////////////////
 template<int Degree>
-Polynomial<Degree>::Polynomial(void){memset(coefficients,0,sizeof(double)*(Degree+1));}
+__host__ __device__ Polynomial<Degree>::Polynomial(void){
+#if defined(__CUDA_ARCH__)
+    cudaMemset(coefficients,0,sizeof(double)*(Degree+1));
+#elif !defined(__CUDA_ARCH__)
+    memset(coefficients,0,sizeof(double)*(Degree+1));
+#endif
+}
 template<int Degree>
 template<int Degree2>
-Polynomial<Degree>::Polynomial(const Polynomial<Degree2>& P){
+__host__ __device__ Polynomial<Degree>::Polynomial(const Polynomial<Degree2>& P){
+#if defined(__CUDA_ARCH__)
+    cudaMemset(coefficients,0,sizeof(double)*(Degree+1));
+#elif !defined(__CUDA_ARCH__)
     memset(coefficients,0,sizeof(double)*(Degree+1));
+#endif
     for(int i=0;i<=Degree && i<=Degree2;i++){coefficients[i]=P.coefficients[i];}
 }
 
 
 template<int Degree>
 template<int Degree2>
-Polynomial<Degree>& Polynomial<Degree>::operator  = (const Polynomial<Degree2> &p){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator  = (const Polynomial<Degree2> &p){
     int d=Degree<Degree2?Degree:Degree2;
+#if defined(__CUDA_ARCH__)
+    cudaMemset(coefficients,0,sizeof(double)*(Degree+1));
+    cudaMemcpy(coefficients,p.coefficients,sizeof(double)*(d+1),cudaMemcpyDeviceToDevice);
+#elif !defined(__CUDA_ARCH__)
     memset(coefficients,0,sizeof(double)*(Degree+1));
     memcpy(coefficients,p.coefficients,sizeof(double)*(d+1));
+#endif
     return *this;
 }
 
 template<int Degree>
-Polynomial<Degree-1> Polynomial<Degree>::derivative(void) const{
+__host__ __device__ Polynomial<Degree-1> Polynomial<Degree>::derivative(void) const{
     Polynomial<Degree-1> p;
     for(int i=0;i<Degree;i++){p.coefficients[i]=coefficients[i+1]*(i+1);}
     return p;
 }
 
 template<int Degree>
-Polynomial<Degree+1> Polynomial<Degree>::integral(void) const{
+__host__ __device__ Polynomial<Degree+1> Polynomial<Degree>::integral(void) const{
     Polynomial<Degree+1> p;
     p.coefficients[0]=0;
     for(int i=0;i<=Degree;i++){p.coefficients[i+1]=coefficients[i]/(i+1);}
     return p;
 }
 template<int Degree>
-double Polynomial<Degree>::operator() (const double& t) const{
+__host__ __device__ double Polynomial<Degree>::operator() (const double& t) const{
     double temp=1;
     double v=0;
     for(int i=0;i<=Degree;i++){
@@ -78,7 +94,7 @@ double Polynomial<Degree>::operator() (const double& t) const{
     return v;
 }
 template<int Degree>
-double Polynomial<Degree>::integral(const double& tMin,const double& tMax) const{
+__host__ __device__ double Polynomial<Degree>::integral(const double& tMin,const double& tMax) const{
     double v=0;
     double t1,t2;
     t1=tMin;
@@ -91,137 +107,143 @@ double Polynomial<Degree>::integral(const double& tMin,const double& tMax) const
     return v;
 }
 template<int Degree>
-int Polynomial<Degree>::operator == (const Polynomial& p) const{
+__host__ __device__ int Polynomial<Degree>::operator == (const Polynomial& p) const{
     for(int i=0;i<=Degree;i++){if(coefficients[i]!=p.coefficients[i]){return 0;}}
     return 1;
 }
 template<int Degree>
-int Polynomial<Degree>::operator != (const Polynomial& p) const{
+__host__ __device__ int Polynomial<Degree>::operator != (const Polynomial& p) const{
     for(int i=0;i<=Degree;i++){if(coefficients[i]==p.coefficients[i]){return 0;}}
     return 1;
 }
 template<int Degree>
-int Polynomial<Degree>::isZero(void) const{
+__host__ __device__ int Polynomial<Degree>::isZero(void) const{
     for(int i=0;i<=Degree;i++){if(coefficients[i]!=0){return 0;}}
     return 1;
 }
 template<int Degree>
-void Polynomial<Degree>::setZero(void){memset(coefficients,0,sizeof(double)*(Degree+1));}
+__host__ __device__ void Polynomial<Degree>::setZero(void){
+#if defined(__CUDA_ARCH__)
+    cudaMemset(coefficients,0,sizeof(double)*(Degree+1));
+#elif !defined(__CUDA_ARCH__)
+    memset(coefficients,0,sizeof(double)*(Degree+1));
+#endif
+}
 
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::addScaled(const Polynomial& p,const double& s){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::addScaled(const Polynomial& p,const double& s){
     for(int i=0;i<=Degree;i++){coefficients[i]+=p.coefficients[i]*s;}
     return *this;
 }
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::operator += (const Polynomial<Degree>& p){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator += (const Polynomial<Degree>& p){
     for(int i=0;i<=Degree;i++){coefficients[i]+=p.coefficients[i];}
     return *this;
 }
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::operator -= (const Polynomial<Degree>& p){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator -= (const Polynomial<Degree>& p){
     for(int i=0;i<=Degree;i++){coefficients[i]-=p.coefficients[i];}
     return *this;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator + (const Polynomial<Degree>& p) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator + (const Polynomial<Degree>& p) const{
     Polynomial q;
     for(int i=0;i<=Degree;i++){q.coefficients[i]=(coefficients[i]+p.coefficients[i]);}
     return q;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator - (const Polynomial<Degree>& p) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator - (const Polynomial<Degree>& p) const{
     Polynomial q;
     for(int i=0;i<=Degree;i++)	{q.coefficients[i]=coefficients[i]-p.coefficients[i];}
     return q;
 }
 template<int Degree>
-void Polynomial<Degree>::Scale(const Polynomial& p,const double& w,Polynomial& q){
+__host__ __device__ void Polynomial<Degree>::Scale(const Polynomial& p,const double& w,Polynomial& q){
     for(int i=0;i<=Degree;i++){q.coefficients[i]=p.coefficients[i]*w;}
 }
 template<int Degree>
-void Polynomial<Degree>::AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,const double& w2,Polynomial& q){
+__host__ __device__ void Polynomial<Degree>::AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,const double& w2,Polynomial& q){
     for(int i=0;i<=Degree;i++){q.coefficients[i]=p1.coefficients[i]*w1+p2.coefficients[i]*w2;}
 }
 template<int Degree>
-void Polynomial<Degree>::AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,Polynomial& q){
+__host__ __device__ void Polynomial<Degree>::AddScaled(const Polynomial& p1,const double& w1,const Polynomial& p2,Polynomial& q){
     for(int i=0;i<=Degree;i++){q.coefficients[i]=p1.coefficients[i]*w1+p2.coefficients[i];}
 }
 template<int Degree>
-void Polynomial<Degree>::AddScaled(const Polynomial& p1,const Polynomial& p2,const double& w2,Polynomial& q){
+__host__ __device__ void Polynomial<Degree>::AddScaled(const Polynomial& p1,const Polynomial& p2,const double& w2,Polynomial& q){
     for(int i=0;i<=Degree;i++){q.coefficients[i]=p1.coefficients[i]+p2.coefficients[i]*w2;}
 }
 
 template<int Degree>
-void Polynomial<Degree>::Subtract(const Polynomial &p1,const Polynomial& p2,Polynomial& q){
+__host__ __device__ void Polynomial<Degree>::Subtract(const Polynomial &p1,const Polynomial& p2,Polynomial& q){
     for(int i=0;i<=Degree;i++){q.coefficients[i]=p1.coefficients[i]-p2.coefficients[i];}
 }
 template<int Degree>
-void Polynomial<Degree>::Negate(const Polynomial& in,Polynomial& out){
+__host__ __device__ void Polynomial<Degree>::Negate(const Polynomial& in,Polynomial& out){
     out=in;
     for(int i=0;i<=Degree;i++){out.coefficients[i]=-out.coefficients[i];}
 }
 
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator - (void) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator - (void) const{
     Polynomial q=*this;
     for(int i=0;i<=Degree;i++){q.coefficients[i]=-q.coefficients[i];}
     return q;
 }
 template<int Degree>
 template<int Degree2>
-Polynomial<Degree+Degree2> Polynomial<Degree>::operator * (const Polynomial<Degree2>& p) const{
+__host__ __device__ Polynomial<Degree+Degree2> Polynomial<Degree>::operator * (const Polynomial<Degree2>& p) const{
     Polynomial<Degree+Degree2> q;
     for(int i=0;i<=Degree;i++){for(int j=0;j<=Degree2;j++){q.coefficients[i+j]+=coefficients[i]*p.coefficients[j];}}
     return q;
 }
 
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::operator += (const double& s){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator += (const double& s){
     coefficients[0]+=s;
     return *this;
 }
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::operator -= (const double& s){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator -= (const double& s){
     coefficients[0]-=s;
     return *this;
 }
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::operator *= (const double& s){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator *= (const double& s){
     for(int i=0;i<=Degree;i++){coefficients[i]*=s;}
     return *this;
 }
 template<int Degree>
-Polynomial<Degree>& Polynomial<Degree>::operator /= (const double& s){
+__host__ __device__ Polynomial<Degree>& Polynomial<Degree>::operator /= (const double& s){
     for(int i=0;i<=Degree;i++){coefficients[i]/=s;}
     return *this;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator + (const double& s) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator + (const double& s) const{
     Polynomial<Degree> q=*this;
     q.coefficients[0]+=s;
     return q;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator - (const double& s) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator - (const double& s) const{
     Polynomial q=*this;
     q.coefficients[0]-=s;
     return q;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator * (const double& s) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator * (const double& s) const{
     Polynomial q;
     for(int i=0;i<=Degree;i++){q.coefficients[i]=coefficients[i]*s;}
     return q;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::operator / (const double& s) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::operator / (const double& s) const{
     Polynomial q(Degree);
     for(int i=0;i<=Degree;i++){q.coefficients[i]=coefficients[i]/s;}
     return q;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::scale(const double& s) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::scale(const double& s) const{
     Polynomial q=*this;
     double s2=1.0;
     for(int i=0;i<=Degree;i++){
@@ -231,7 +253,7 @@ Polynomial<Degree> Polynomial<Degree>::scale(const double& s) const{
     return q;
 }
 template<int Degree>
-Polynomial<Degree> Polynomial<Degree>::shift(const double& t) const{
+__host__ __device__ Polynomial<Degree> Polynomial<Degree>::shift(const double& t) const{
     Polynomial<Degree> q;
     for(int i=0;i<=Degree;i++){
         double temp=1;
@@ -244,7 +266,7 @@ Polynomial<Degree> Polynomial<Degree>::shift(const double& t) const{
     return q;
 }
 template<int Degree>
-void Polynomial<Degree>::printnl(void) const{
+__host__ __device__ void Polynomial<Degree>::printnl(void) const{
     for(int j=0;j<=Degree;j++){
         printf("%6.4f x^%d ",coefficients[j],j);
         if(j<Degree && coefficients[j+1]>=0){printf("+");}
@@ -252,7 +274,7 @@ void Polynomial<Degree>::printnl(void) const{
     printf("\n");
 }
 template<int Degree>
-void Polynomial<Degree>::getSolutions(const double& c,std::vector<double>& roots,const double& EPS) const {
+__host__ __device__ void Polynomial<Degree>::getSolutions(const double& c,std::vector<double>& roots,const double& EPS) const {
     double r[4][2];
     int rCount=0;
     roots.clear();

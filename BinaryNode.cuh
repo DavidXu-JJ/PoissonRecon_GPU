@@ -33,28 +33,28 @@ template<class Real>
 class BinaryNode{
 public:
     /**     2^depth                                         */
-    static inline int CenterCount(int depth){return 1<<depth;}
+    __host__ __device__ static inline int CenterCount(int depth){return 1<<depth;}
     /**     2^0 + 2^1 + 2^maxDepth = 2^(maxDepth+1) - 1     */
-    static inline int CumulativeCenterCount(int maxDepth){return (1<<(maxDepth+1))-1;}
-    static inline int Index(int depth, int offSet){return (1<<depth)+offSet-1;}
-    static inline int CornerIndex(int maxDepth,int depth,int offSet,int forwardCorner)
+    __host__ __device__ static inline int CumulativeCenterCount(int maxDepth){return (1<<(maxDepth+1))-1;}
+    __host__ __device__ static inline int Index(int depth, int offSet){return (1<<depth)+offSet-1;}
+    __host__ __device__ static inline int CornerIndex(int maxDepth,int depth,int offSet,int forwardCorner)
     {return (offSet+forwardCorner)<<(maxDepth-depth);}
-    static inline Real CornerIndexPosition(int index,int maxDepth)
+    __host__ __device__ static inline Real CornerIndexPosition(int index,int maxDepth)
     {return Real(index)/(1<<maxDepth);}
-    static inline Real Width(int depth)
+    __host__ __device__ static inline Real Width(int depth)
     {return Real(1.0/(1<<depth));}
-    static inline void CenterAndWidth(int depth,int offset,Real& center,Real& width)
+    __host__ __device__ static inline void CenterAndWidth(int depth,int offset,Real& center,Real& width)
     {
         width=Real(1.0/(1<<depth));
         center=Real((0.5+offset)*width);
     }
-    static inline void CenterAndWidth(int idx,Real& center,Real& width)
+    __host__ __device__ static inline void CenterAndWidth(int idx,Real& center,Real& width)
     {
         int depth,offset;
         DepthAndOffset(idx,depth,offset);
         CenterAndWidth(depth,offset,center,width);
     }
-    static inline void DepthAndOffset(int idx, int& depth,int& offset)
+    __host__ __device__ static inline void DepthAndOffset(int idx, int& depth,int& offset)
     {
         int i=idx+1;
         depth=-1;
