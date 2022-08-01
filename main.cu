@@ -713,24 +713,27 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
         cudaDeviceSynchronize();
     }
 
-//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
-//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
-//    for(int j=0;j<4;++j) {
-//        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j]+NodeArrayCount_h[j]; ++i) {
-////            if(a[i].pnum==0) continue;
-//            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
-//                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
-//            for(int k=0;k<8;++k){
-//                printf("children[%d]:%d ",k,a[i].children[k]);
-//            }
-//            puts("");
-//            for(int k=0;k<27;++k){
-//                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
-//            }
-//            puts("");
-//        }
-//        std::cout<<std::endl;
-//    }
+    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
+    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+    for(int j=0;j<4;++j) {
+        int all=0;
+        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j]+NodeArrayCount_h[j]; ++i) {
+//            if(a[i].pnum==0) continue;
+            all+=a[i].dnum;
+            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
+                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
+            for(int k=0;k<8;++k){
+                printf("children[%d]:%d ",k,a[i].children[k]);
+            }
+            puts("");
+            for(int k=0;k<27;++k){
+                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
+            }
+            puts("");
+        }
+        printf("allD:%d\n",all);
+        std::cout<<std::endl;
+    }
 
     double ed=cpuSecond();
     printf("GPU NodeArray build takes:%lfs\n",ed-mid);
@@ -738,12 +741,20 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
 }
 
 __host__ __device__ int getDepth(const int& idxOfNodeArray,int *BaseAddressArray){
-    int depth;
+    int depth=0;
+#if defined(__CUDA_ARCH__)
+    for(depth=0;depth<maxDepth;++depth){
+        if(BaseAddressArray[depth] <= idxOfNodeArray && BaseAddressArray[depth+1] > idxOfNodeArray){
+            break;
+        }
+    }
+#elif !defined(__CUDA_ARCH__)
     for(depth=0;depth<maxDepth_h;++depth){
         if(BaseAddressArray[depth] <= idxOfNodeArray && BaseAddressArray[depth+1] > idxOfNodeArray){
             break;
         }
     }
+#endif
     return depth;
 }
 
@@ -751,6 +762,16 @@ __host__ __device__ void getFunctionIdxOfNode(const int& key,const int &depthD,i
     idx[0]=(1<<depthD)-1;
     idx[1]=idx[0];
     idx[2]=idx[1];
+#if defined(__CUDA_ARCH__)
+    for(int depth=depthD;depth >= 1;--depth){
+        int sonKeyX = ( key >> (3 * (maxDepth-depth) + 2) ) & 1;
+        int sonKeyY = ( key >> (3 * (maxDepth-depth) + 1) ) & 1;
+        int sonKeyZ = ( key >> (3 * (maxDepth-depth)) ) & 1;
+        idx[0] += sonKeyX * (1<<(depthD-depth));
+        idx[1] += sonKeyY * (1<<(depthD-depth));
+        idx[2] += sonKeyZ * (1<<(depthD-depth));
+    }
+#elif !defined(__CUDA_ARCH__)
     for(int depth=depthD;depth >= 1;--depth){
         int sonKeyX = ( key >> (3 * (maxDepth_h-depth) + 2) ) & 1;
         int sonKeyY = ( key >> (3 * (maxDepth_h-depth) + 1) ) & 1;
@@ -759,6 +780,7 @@ __host__ __device__ void getFunctionIdxOfNode(const int& key,const int &depthD,i
         idx[1] += sonKeyY * (1<<(depthD-depth));
         idx[2] += sonKeyZ * (1<<(depthD-depth));
     }
+#endif
 }
 
 __device__ double F_center_width_Point(const PPolynomial<2> &BaseFunction_d,const Point3D<float> &center,const float &width,const Point3D<float> &point){
@@ -777,6 +799,7 @@ __global__ void computeVectorField(PPolynomial<2> *BaseFunction_d,Point3D<float>
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     offset+=left;
     for(int i=offset;i<right;i+=stride){
+        printf("i:%d,right:%d,i+stride:%d\n",i,right,i+stride);
         int idx[3];
         float width;
         getFunctionIdxOfNode(NodeArray[i].key,maxDepth,idx);
@@ -784,14 +807,18 @@ __global__ void computeVectorField(PPolynomial<2> *BaseFunction_d,Point3D<float>
         BinaryNode<float>::CenterAndWidth(idx[0],o_c.coords[0],width);
         BinaryNode<float>::CenterAndWidth(idx[1],o_c.coords[1],width);
         BinaryNode<float>::CenterAndWidth(idx[2],o_c.coords[2],width);
-        const PPolynomial<2> BaseFunction=BaseFunction_d->scale(width);
+        // check at https://forums.developer.nvidia.com/t/how-to-use-class-in-cuda-c/61761
+        PPolynomial<2> BaseFunction( BaseFunction_d->scale(width) );
+        printf("BaseFunction ok\n");
         for(int j=0;j<27;++j){
             int neigh=NodeArray[i].neighs[j];
             if(neigh!=-1){
+                printf("neigh:%d\n",neigh);
                 for(int k=0;k<NodeArray[neigh].pnum;++k){
                     int pointIdx=NodeArray[neigh].pidx+k;
                     double weight= F_center_width_Point(BaseFunction,samplePoints_d[pointIdx],width,o_c);
                     int IdxInMaxDepth=i-left;
+                    printf("weight:%lf\n",weight);
                     VectorField[IdxInMaxDepth].coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
                     VectorField[IdxInMaxDepth].coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
                     VectorField[IdxInMaxDepth].coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
@@ -810,7 +837,7 @@ __host__ __device__ float DotProduct(const Point3D<float> &p1,const Point3D<floa
     return res;
 }
 
-__global__ void computeFinerNodesDivergence(int *BaseAddressArray,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,int start_D,const double *dot_F_DF,int resolution,double *Divergence) {
+__global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,int start_D,const double *dot_F_DF,int resolution,double *Divergence) {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -818,13 +845,14 @@ __global__ void computeFinerNodesDivergence(int *BaseAddressArray,OctNode *NodeA
     for(int i=offset;i<right;i+=stride) {
         for(int j=0;j<27;++j){
             int neighIdx=NodeArray[i].neighs[j];
-            for(int k=0;k<NodeArray[i].dnum;++k){
-                int Node_D_Idx=NodeArray[i].didx + k ;
+            if(neighIdx == -1) continue;
+            for(int k=0;k<NodeArray[neighIdx].dnum;++k){
+                int Node_D_Idx=NodeArray[neighIdx].didx + k ;
                 const Point3D<float> &vo = VectorField[Node_D_Idx];
 
                 int idxO_1[3],idxO_2[3];
 
-                int depthD= getDepth(i,BaseAddressArray);
+                int depthD= getDepth(i,BaseAddressArray_d);
                 getFunctionIdxOfNode(NodeArray[i].key,depthD,idxO_1);
                 getFunctionIdxOfNode(NodeArray[start_D+Node_D_Idx].key,depthD,idxO_2);
 
@@ -840,7 +868,13 @@ __global__ void computeFinerNodesDivergence(int *BaseAddressArray,OctNode *NodeA
                 Divergence[i] += DotProduct(vo,uo);
             }
         }
+        if(Divergence[i]!=0) {
+            printf("%d %lf\n", i, Divergence[i]);
+        }
     }
+}
+
+__global__ void computeCoarserNodesDivergence(){
 }
 
 int main() {
@@ -860,6 +894,9 @@ int main() {
                            NodeArrayCount_h,BaseAddressArray,
                            samplePoints_d,sampleNormals_d,NodeArray );
 
+    int *BaseAddressArray_d=NULL;
+    CHECK(cudaMalloc((int **)&BaseAddressArray_d,sizeof(int)*(maxDepth_h+1) ));
+    CHECK(cudaMemcpy(BaseAddressArray_d,BaseAddressArray,sizeof(int)*(maxDepth_h+1),cudaMemcpyHostToDevice));
 //    for(int i=0;i<=maxDepth_h;++i){
 //        printf("%d %d\n",NodeArrayCount_h[i],BaseAddressArray[i]);
 //    }
@@ -935,7 +972,7 @@ int main() {
     CHECK(cudaMalloc((double **)&Divergence,nByte));
     CHECK(cudaMemset(Divergence,0,nByte));
 
-    computeFinerNodesDivergence<<<grid,block>>>(BaseAddressArray,
+    computeFinerNodesDivergence<<<grid,block>>>(BaseAddressArray_d,
                                                 NodeArray,BaseAddressArray[5],BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h],
                                                 VectorField,BaseAddressArray[maxDepth_h],
                                                 dot_F_DF,fData.res,
@@ -944,6 +981,5 @@ int main() {
 
     double mid2=cpuSecond();
     printf("Compute finer depth nodes' divergence takes:%lfs\n",mid2-mid1);
-
 
 }
