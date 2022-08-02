@@ -29,6 +29,7 @@ __constant__ float EPSILON=float(1e-6);
 __constant__ float ROUND_EPS=float(1e-5);
 __constant__ int maxDepth=9;
 __constant__ int markOffset=31;
+__constant__ int resolution=1023;
 
 __constant__ int LUTparent[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
@@ -772,6 +773,9 @@ __host__ __device__ void getFunctionIdxOfNode(const int& key,const int &depthD,i
         idx[1] += sonKeyY * (1<<(depthD-depth));
         idx[2] += sonKeyZ * (1<<(depthD-depth));
     }
+//    if(depthD==2) {
+//        printf("%d %d %d\n",idx[0],idx[1],idx[2]);
+//    }
 #elif !defined(__CUDA_ARCH__)
     for(int depth=depthD;depth >= 1;--depth){
         int sonKeyX = ( key >> (3 * (maxDepth_h-depth) + 2) ) & 1;
@@ -780,6 +784,30 @@ __host__ __device__ void getFunctionIdxOfNode(const int& key,const int &depthD,i
         idx[0] += sonKeyX * (1<<(depthD-depth));
         idx[1] += sonKeyY * (1<<(depthD-depth));
         idx[2] += sonKeyZ * (1<<(depthD-depth));
+    }
+#endif
+}
+
+__host__ __device__ void getEncodedFunctionIdxOfNode(const int& key,const int &depthD,int *idx){
+#if defined(__CUDA_ARCH__)
+    *idx = ((1<<depthD)-1)*(1+(1<<maxDepth)+(1<<(2*maxDepth)) );
+    for(int depth=depthD;depth >= 1;--depth){
+        int sonKeyX = ( key >> (3 * (maxDepth-depth) + 2) ) & 1;
+        int sonKeyY = ( key >> (3 * (maxDepth-depth) + 1) ) & 1;
+        int sonKeyZ = ( key >> (3 * (maxDepth-depth)) ) & 1;
+        *idx += sonKeyX * (1<<(depthD-depth)) +
+                sonKeyY * (1<<(depthD-depth)) * (1<<maxDepth) +
+                sonKeyZ * (1<<(depthD-depth)) * (1<<(2*maxDepth));
+    }
+#elif !defined(__CUDA_ARCH__)
+    *idx = ((1<<depthD)-1)*(1+(1<<maxDepth_h)+(1<<(2*maxDepth_h)) );
+    for(int depth=depthD;depth >= 1;--depth){
+        int sonKeyX = ( key >> (3 * (maxDepth_h-depth) + 2) ) & 1;
+        int sonKeyY = ( key >> (3 * (maxDepth_h-depth) + 1) ) & 1;
+        int sonKeyZ = ( key >> (3 * (maxDepth_h-depth)) ) & 1;
+        *idx += sonKeyX * (1<<(depthD-depth)) +
+                sonKeyY * (1<<(depthD-depth)) * (1<<maxDepth_h) +
+                sonKeyZ * (1<<(depthD-depth)) * (1<<(2*maxDepth_h));
     }
 #endif
 }
@@ -842,13 +870,24 @@ __global__ void precomputeFunctionIdxOfNode(int *BaseAddressArray_d,OctNode *Nod
     }
 }
 
-__global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdxInFunction,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,const double *dot_F_DF,int resolution,double *Divergence) {
+__global__ void precomputeEncodedFunctionIdxOfNode(int *BaseAddressArray_d,OctNode *NodeArray,int NodeArray_sz,int *NodeIdxInFunction){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<NodeArray_sz;i+=stride){
+        int depthD= getDepth(i,BaseAddressArray_d);
+        getEncodedFunctionIdxOfNode(NodeArray[i].key,depthD,NodeIdxInFunction+i);
+    }
+}
+
+__global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdxInFunction,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,const double *dot_F_DF,double *Divergence) {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     offset+=left;
     int start_D=BaseAddressArray_d[maxDepth];
     for(int i=offset;i<right;i+=stride) {
+#pragma unroll
         for(int j=0;j<27;++j){
             int neighIdx=NodeArray[i].neighs[j];
             if(neighIdx == -1) continue;
@@ -871,6 +910,62 @@ __global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdx
                 idxO_2[0]=NodeIdxInFunction[idx_st];
                 idxO_2[1]=NodeIdxInFunction[idx_st+1];
                 idxO_2[2]=NodeIdxInFunction[idx_st+2];
+
+                int scratch[3];
+                scratch[0] = idxO_1[0] * resolution + idxO_2[0];
+                scratch[1] = idxO_1[1] * resolution + idxO_2[1];
+                scratch[2] = idxO_1[2] * resolution + idxO_2[2];
+
+//                int scratch[3];
+//                int idx_st1=3*i;
+//                int idx_st2=3*(start_D+Node_D_Idx);
+//                scratch[0] = NodeIdxInFunction[idx_st1] * resolution + NodeIdxInFunction[idx_st2];
+//                scratch[1] = NodeIdxInFunction[idx_st1+1] * resolution + NodeIdxInFunction[idx_st2+1];
+//                scratch[2] = NodeIdxInFunction[idx_st1+2] * resolution + NodeIdxInFunction[idx_st2+1];
+
+                Point3D<float> uo;
+                uo.coords[0]=dot_F_DF[scratch[0]];
+                uo.coords[1]=dot_F_DF[scratch[1]];
+                uo.coords[2]=dot_F_DF[scratch[2]];
+                Divergence[i] += DotProduct(vo,uo);
+            }
+        }
+//        if(Divergence[i]!=0) {
+//            printf("%d %lf\n", i, Divergence[i]);
+//        }
+    }
+}
+
+__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdxInFunction,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,const double *dot_F_DF,double *Divergence) {
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    int start_D=BaseAddressArray_d[maxDepth];
+    for(int i=offset;i<right;i+=stride) {
+#pragma unroll
+        for(int j=0;j<27;++j){
+            int neighIdx=NodeArray[i].neighs[j];
+            if(neighIdx == -1) continue;
+            for(int k=0;k<NodeArray[neighIdx].dnum;++k){
+                int Node_D_Idx=NodeArray[neighIdx].didx + k ;
+                const Point3D<float> &vo = VectorField[Node_D_Idx];
+
+                int idxO_1[3],idxO_2[3];
+
+//                int depthD= getDepth(i,BaseAddressArray_d);
+//                getFunctionIdxOfNode(NodeArray[i].key,depthD,idxO_1);
+//                getFunctionIdxOfNode(NodeArray[start_D+Node_D_Idx].key,depthD,idxO_2);
+
+                int encode_idx=NodeIdxInFunction[i];
+                idxO_1[0]=encode_idx%(1<<maxDepth);
+                idxO_1[1]=(encode_idx/(1<<maxDepth))%(1<<maxDepth);
+                idxO_1[2]=encode_idx/(1<<(2*maxDepth));
+
+                encode_idx=NodeIdxInFunction[start_D+Node_D_Idx];
+                idxO_2[0]=encode_idx%(1<<maxDepth);
+                idxO_2[1]=(encode_idx/(1<<maxDepth))%(1<<maxDepth);
+                idxO_2[2]=encode_idx/(1<<(2*maxDepth));
 
                 int scratch[3];
                 scratch[0] = idxO_1[0] * resolution + idxO_2[0];
@@ -1001,21 +1096,21 @@ int main() {
     CHECK(cudaMemset(Divergence,0,nByte));
 
     int *NodeIdxInFunction=NULL;
-    nByte=sizeof(int) * NodeArray_sz * 3;
+    nByte=sizeof(int) * NodeArray_sz;
     CHECK(cudaMalloc((int **)&NodeIdxInFunction,nByte));
-    precomputeFunctionIdxOfNode<<<grid,block>>>(BaseAddressArray_d,
-                                                NodeArray,NodeArray_sz,
-                                                NodeIdxInFunction);
+    precomputeEncodedFunctionIdxOfNode<<<grid,block>>>(BaseAddressArray_d,
+                                                       NodeArray,NodeArray_sz,
+                                                       NodeIdxInFunction);
     cudaDeviceSynchronize();
     double mid2=cpuSecond();
     printf("Precompute Function index of node takes:%lfs\n",mid2-mid1);
 
     // memory access is very slow, maybe optimize it by setting faster memory.
-    computeFinerNodesDivergence<<<grid,block>>>(BaseAddressArray_d,NodeIdxInFunction,
-                                                NodeArray,BaseAddressArray[5],BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h],
-                                                VectorField,
-                                                dot_F_DF,fData.res,
-                                                Divergence);
+    computeEncodedFinerNodesDivergence<<<grid,block>>>(BaseAddressArray_d,NodeIdxInFunction,
+                                                       NodeArray,BaseAddressArray[5],BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h],
+                                                       VectorField,
+                                                       dot_F_DF,
+                                                       Divergence);
     cudaDeviceSynchronize();
 
     double mid3=cpuSecond();
