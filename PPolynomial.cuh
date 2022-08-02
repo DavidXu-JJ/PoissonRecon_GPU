@@ -35,7 +35,7 @@ template<int Degree>
 class StartingPolynomial{
 public:
     Polynomial<Degree> p;
-    double start;
+    float start;
 
     /**	    return a StartingPolynomial
       *	    new start is the bigger start
@@ -43,13 +43,14 @@ public:
     template<int Degree2>
     __host__ __device__ StartingPolynomial<Degree+Degree2>  operator * (const StartingPolynomial<Degree2>& p) const;
 
+    __host__ __device__ StartingPolynomial& operator = (const StartingPolynomial& sp);
     /**     start = start * s
       *     polynomial is scaled by s   */
-    __host__ __device__ StartingPolynomial scale(const double& s) const;
+    __host__ __device__ StartingPolynomial scale(const float& s) const;
 
     /**     start = start + t
       *     polynomial f(x) -> f(x-t)   */
-    __host__ __device__ StartingPolynomial shift(const double& t) const;
+    __host__ __device__ StartingPolynomial shift(const float& t) const;
 
     /**     big start is bigger */
     __host__ __device__ int operator < (const StartingPolynomial& sp) const;
@@ -66,31 +67,31 @@ public:
     size_t polyCount;
     StartingPolynomial<Degree>* polys;
 
-    __host__ __device__ PPolynomial(void);
-    __host__ __device__ PPolynomial(const PPolynomial<Degree>& p);
-    __host__ __device__ ~PPolynomial(void);
+    PPolynomial(void);
+    PPolynomial(const PPolynomial<Degree>& p);
+    ~PPolynomial(void);
 
-    __host__ __device__ PPolynomial& operator = (const PPolynomial& p);
+    PPolynomial& operator = (const PPolynomial& p);
 
     /**     return size of polys    */
-    __host__ __device__ int size(void) const;
+    int size(void) const;
 
     /**     polyCount = size, polys is allocated    */
-    __host__ __device__ void set(const size_t& size);
+    void set(const size_t& size);
 
     /**     Note: this method will sort the elements in sps
       *     polys with the same start will be added together    */
-    __host__ __device__ void set(StartingPolynomial<Degree>* sps,const int& count);
+    void set(StartingPolynomial<Degree>* sps,const int& count);
 
     /**     realloc the memory to expand the polys pointer memory
       *     the old content will be remained    */
-    __host__ __device__ void reset(const size_t& newSize);
+    void reset(const size_t& newSize);
 
 
     /**     assume that StartPolynomial is sorted by set() function
       *     calculate f0(t) + f1(t) + f2(t) + ... + fn(t)
       *     StartPolynomial n+1's start >= t    */
-    __host__ __device__ double operator()(const double& t) const;
+    float operator()(const float& t) const;
 
 
     /**     calculate the definite integral, integral start from the p[i].start, not min(tMin, tMax)
@@ -98,54 +99,54 @@ public:
       *     p[0].start / end [f0(x)dx] + p[1].start / end [f1(x)dx] + ... + p[n].start / end [fn(x)dx]
       *     p[n+1].start >= min(tMin, tMax)
       *     tMin can be bigger than tMax    */
-    __host__ __device__ double integral(const double& tMin,const double& tMax) const;
+    float integral(const float& tMin,const float& tMax) const;
 
 
     /**     integral(polys[0].start,polys[polyCount-1].start)   */
-    __host__ __device__ double Integral(void) const;
+    float Integral(void) const;
 
     template<int Degree2>
-    __host__ __device__ PPolynomial<Degree>& operator = (const PPolynomial<Degree2>& p);
+    PPolynomial<Degree>& operator = (const PPolynomial<Degree2>& p);
 
-    __host__ __device__ PPolynomial  operator + (const PPolynomial& p) const;
-    __host__ __device__ PPolynomial  operator - (const PPolynomial& p) const;
+    PPolynomial  operator + (const PPolynomial& p) const;
+    PPolynomial  operator - (const PPolynomial& p) const;
 
     /**     remain the start
       *     multiply every polynomial by p  */
     template<int Degree2>
-    __host__ __device__ PPolynomial<Degree+Degree2> operator * (const Polynomial<Degree2>& p) const;
+    PPolynomial<Degree+Degree2> operator * (const Polynomial<Degree2>& p) const;
 
     /**     for i in *this.polys
       *         for j in p.polys
       *              new.polys = i * j      */
     template<int Degree2>
-    __host__ __device__ PPolynomial<Degree+Degree2> operator * (const PPolynomial<Degree2>& p) const;
+    PPolynomial<Degree+Degree2> operator * (const PPolynomial<Degree2>& p) const;
 
 
-    __host__ __device__ PPolynomial& operator += (const double& s);
-    __host__ __device__ PPolynomial& operator -= (const double& s);
-    __host__ __device__ PPolynomial& operator *= (const double& s);
-    __host__ __device__ PPolynomial& operator /= (const double& s);
-    __host__ __device__ PPolynomial  operator +  (const double& s) const;
-    __host__ __device__ PPolynomial  operator -  (const double& s) const;
-    __host__ __device__ PPolynomial  operator *  (const double& s) const;
-    __host__ __device__ PPolynomial  operator /  (const double& s) const;
+    PPolynomial& operator += (const float& s);
+    PPolynomial& operator -= (const float& s);
+    PPolynomial& operator *= (const float& s);
+    PPolynomial& operator /= (const float& s);
+    PPolynomial  operator +  (const float& s) const;
+    PPolynomial  operator -  (const float& s) const;
+    PPolynomial  operator *  (const float& s) const;
+    PPolynomial  operator /  (const float& s) const;
 
     /**     merge the *this and scale*poly
       *     poly with the same start will be added together */
-    __host__ __device__ PPolynomial& addScaled(const PPolynomial& poly,const double& scale);
+    PPolynomial& addScaled(const PPolynomial& poly,const float& scale);
 
     /**     scale every poly in *this
       *     every start will be start * s   */
-    __host__ __device__ PPolynomial scale(const double& s) const;
+    PPolynomial scale(const float& s) const;
 
     /**     shift every poly in *this
       *     every start + t                 */
-    __host__ __device__ PPolynomial shift(const double& t) const;
+    PPolynomial shift(const float& t) const;
 
     /**     polys.start remain the same
       *     polys are derived               */
-    __host__ __device__ PPolynomial<Degree-1> derivative(void) const;
+    PPolynomial<Degree-1> derivative(void) const;
 
     /**     polys.start remain the same
       *     definite integral function
@@ -153,21 +154,70 @@ public:
       *     Code:
       *     q.polys[i].p=polys[i].p.integral();
       *     q.polys[i].p-=q.polys[i].p(q.polys[i].start);  */
-    __host__ __device__ PPolynomial<Degree+1> integral(void) const;
+    PPolynomial<Degree+1> integral(void) const;
 
     /**     polys with $start < min are added together, get a new poly
       *     solve
       *     a0 x^0 + a1 x^1 + ... + an x^n = c
       *     save all solution accord with ( min < root < max )  */
-    __host__ __device__ void getSolutions(const double& c,std::vector<double>& roots,const double& EPS,const double& min=-DBL_MAX,const double& max=DBL_MAX) const;
+    void getSolutions(const float& c,std::vector<float>& roots,const float& EPS,const float& min=-DBL_MAX,const float& max=DBL_MAX) const;
 
-    __host__ __device__ void printnl(void) const;
+    void printnl(void) const;
 
-    __host__ __device__ PPolynomial<Degree+1> MovingAverage(const double& radius);
-    __host__ __device__ static PPolynomial ConstantFunction(const double& width=0.5);
+    PPolynomial<Degree+1> MovingAverage(const float& radius);
+    static PPolynomial ConstantFunction(const float& width=0.5);
     /**     use to generate approximation to Gaussian filter    */
-    __host__ __device__ static PPolynomial GaussianApproximation(const double& width=0.5);
-    void write(FILE* fp,const int& samples,const double& min,const double& max) const;
+    static PPolynomial GaussianApproximation(const float& width=0.5);
+    void write(FILE* fp,const int& samples,const float& min,const float& max) const;
 };
+
+template<int Degree>
+__host__ void copySinglePPolynomialHostToDevice(PPolynomial<Degree> *pp_h,PPolynomial<Degree> *&pp_d){
+    cudaMalloc((PPolynomial<Degree> **) &pp_d, sizeof(PPolynomial<Degree>));
+    StartingPolynomial<Degree> *d_addr=NULL;
+    StartingPolynomial<Degree> *h_addr=pp_h->polys;
+    int nByte=sizeof(StartingPolynomial<Degree>) * pp_h->polyCount;
+    cudaMalloc((StartingPolynomial<Degree> **) &d_addr,nByte);
+    cudaMemcpy(d_addr,pp_h->polys,nByte,cudaMemcpyHostToDevice);
+    pp_h->polys=d_addr;
+
+    cudaMemcpy(pp_d,pp_h,sizeof(PPolynomial<Degree>),cudaMemcpyHostToDevice);
+    pp_h->polys=h_addr;
+
+}
+
+template<int Degree>
+__host__ void copyWholePPolynomialHostToDevice(PPolynomial<Degree> *pp_h,PPolynomial<Degree> *&pp_d,int size){
+    cudaMalloc((PPolynomial<Degree> **) &pp_d, sizeof(PPolynomial<Degree>) * size);
+    std::vector<StartingPolynomial<Degree> *> host_pointer_v;
+    for(int i=0;i<size;++i){
+        StartingPolynomial<Degree> *d_addr=NULL;
+        int nByte=sizeof(StartingPolynomial<Degree>) * pp_h[i].polyCount;
+        host_pointer_v.push_back(pp_h[i].polys);
+
+        cudaMalloc((StartingPolynomial<Degree> **) &d_addr,nByte);
+        cudaMemcpy(d_addr,pp_h[i].polys,nByte,cudaMemcpyHostToDevice);
+        pp_h[i].polys=d_addr;
+    }
+    cudaMemcpy(pp_d,pp_h,sizeof(PPolynomial<Degree>) * size,cudaMemcpyHostToDevice);
+
+    for(int i=0;i<size;++i){
+        pp_h[i].polys=host_pointer_v[i];
+    }
+}
+
+
+template<int Degree>
+__host__ __device__ void scale(PPolynomial<Degree> *pp,const float& scale){
+    for(int i=0;i<pp->polyCount;++i){
+        pp->polys[i].start *= scale;
+        float s2=1.0;
+        for(int j=0;j<=Degree;++j){
+            pp->polys[i].p.coefficients[j]*=s2;
+            s2/=scale;
+        }
+    }
+}
+
 #include "PPolynomial.inl"
 #endif // P_POLYNOMIAL_INCLUDED

@@ -17,7 +17,8 @@ add_executable(GPU_PoissonRecon main.cu
         Factor.cu Factor.cuh
         Polynomial.cuh Polynomial.inl
         PPolynomial.cuh PPolynomial.inl
-        FunctionData.cuh FunctionData.inl)
+        FunctionData.cuh FunctionData.inl
+        ConfirmedPPolynomial.cuh)
 
 set_target_properties(GPU_PoissonRecon PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)

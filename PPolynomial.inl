@@ -27,7 +27,6 @@ DAMAGE.
 */
 
 #include "Factor.cuh"
-#include "cuda.h"
 
 ////////////////////////
 // StartingPolynomial //
@@ -42,14 +41,20 @@ __host__ __device__ StartingPolynomial<Degree+Degree2> StartingPolynomial<Degree
     return sp;
 }
 template<int Degree>
-__host__ __device__ StartingPolynomial<Degree> StartingPolynomial<Degree>::scale(const double& s) const{
+__host__ __device__ StartingPolynomial<Degree>& StartingPolynomial<Degree>::operator = (const StartingPolynomial<Degree>& sp){
+    start=sp.start;
+    for(int i=0;i<=Degree;++i)
+        p.coefficients[i]=sp.p.coefficients[i];
+}
+template<int Degree>
+__host__ __device__ StartingPolynomial<Degree> StartingPolynomial<Degree>::scale(const float& s) const{
     StartingPolynomial q;
     q.start=start*s;
     q.p=p.scale(s);
     return q;
 }
 template<int Degree>
-__host__ __device__ StartingPolynomial<Degree> StartingPolynomial<Degree>::shift(const double& s) const{
+__host__ __device__ StartingPolynomial<Degree> StartingPolynomial<Degree>::shift(const float& s) const{
     StartingPolynomial q;
     q.start=start+s;
     q.p=p.shift(s);
@@ -64,7 +69,7 @@ __host__ __device__ int StartingPolynomial<Degree>::operator < (const StartingPo
 }
 template<int Degree>
 __host__ __device__ int StartingPolynomial<Degree>::Compare(const void* v1,const void* v2){
-    double d=((StartingPolynomial*)(v1))->start-((StartingPolynomial*)(v2))->start;
+    float d=((StartingPolynomial*)(v1))->start-((StartingPolynomial*)(v2))->start;
     if		(d<0)	{return -1;}
     else if	(d>0)	{return  1;}
     else			{return  0;}
@@ -74,36 +79,26 @@ __host__ __device__ int StartingPolynomial<Degree>::Compare(const void* v1,const
 // PPolynomial //
 /////////////////
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>::PPolynomial(void){
+PPolynomial<Degree>::PPolynomial(void){
     polyCount=0;
     polys=NULL;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>::PPolynomial(const PPolynomial<Degree>& p){
+PPolynomial<Degree>::PPolynomial(const PPolynomial<Degree>& p){
     polyCount=0;
     polys=NULL;
     set(p.polyCount);
-#if defined(__CUDA_ARCH__)
-    cudaMemcpy(polys,p.polys,sizeof(StartingPolynomial<Degree>)*p.polyCount,cudaMemcpyDeviceToDevice);
-#elif !defined(__CUDA_ARCH__)
     memcpy(polys,p.polys,sizeof(StartingPolynomial<Degree>)*p.polyCount);
-#endif
 }
 
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>::~PPolynomial(void){
-    if(polyCount){
-#if defined(__CUDA_ARCH__)
-        cudaFree(polys);
-#elif !defined(__CUDA_ARCH__)
-        free(polys);
-#endif
-    }
+PPolynomial<Degree>::~PPolynomial(void){
+    if(polyCount){free(polys);}
     polyCount=0;
     polys=NULL;
 }
 template<int Degree>
-__host__ __device__ void PPolynomial<Degree>::set(StartingPolynomial<Degree>* sps,const int& count){
+void PPolynomial<Degree>::set(StartingPolynomial<Degree>* sps,const int& count){
     int i,c=0;
     set(count);
     qsort(sps,count,sizeof(StartingPolynomial<Degree>),StartingPolynomial<Degree>::Compare);
@@ -114,59 +109,35 @@ __host__ __device__ void PPolynomial<Degree>::set(StartingPolynomial<Degree>* sp
     reset(c);
 }
 template <int Degree>
-__host__ __device__ int PPolynomial<Degree>::size(void) const{return int(sizeof(StartingPolynomial<Degree>)*polyCount);}
+int PPolynomial<Degree>::size(void) const{return int(sizeof(StartingPolynomial<Degree>)*polyCount);}
 
 template<int Degree>
-__host__ __device__ void PPolynomial<Degree>::set(const size_t &size){
-    if(polyCount){
-#if defined(__CUDA_ARCH__)
-        cudaFree(polys);
-#elif !defined(__CUDA_ARCH__)
-        free(polys);
-#endif
-    }
+void PPolynomial<Degree>::set(const size_t &size){
+    if(polyCount){free(polys);}
     polyCount=0;
     polys=NULL;
     polyCount=size;
     if(size){
-#if defined(__CUDA_ARCH__)
-        cudaMalloc((StartingPolynomial<Degree>**)&polys,sizeof(StartingPolynomial<Degree>)*size);
-        cudaMemset(polys,0,sizeof(StartingPolynomial<Degree>)*size);
-#elif !defined(__CUDA_ARCH__)
         polys=(StartingPolynomial<Degree>*)malloc(sizeof(StartingPolynomial<Degree>)*size);
         memset(polys,0,sizeof(StartingPolynomial<Degree>)*size);
-#endif
     }
 }
 template<int Degree>
-__host__ __device__ void PPolynomial<Degree>::reset(const size_t& newSize){
-#if defined(__CUDA_ARCH__)
-    StartingPolynomial<Degree> *newPolys=NULL;
-    cudaMalloc((StartingPolynomial<Degree>**)&newPolys,sizeof(StartingPolynomial<Degree>)*newSize);
-    cudaMemcpy(newPolys,polys,polyCount,cudaMemcpyDeviceToDevice);
-    cudaFree(polys);
-    polyCount=newSize;
-    polys=newPolys;
-#elif !defined(__CUDA_ARCH__)
+void PPolynomial<Degree>::reset(const size_t& newSize){
     polyCount=newSize;
     polys=(StartingPolynomial<Degree>*)realloc(polys,sizeof(StartingPolynomial<Degree>)*newSize);
-#endif
 }
 
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator = (const PPolynomial<Degree>& p){
+PPolynomial<Degree>& PPolynomial<Degree>::operator = (const PPolynomial<Degree>& p){
     set(p.polyCount);
-#if defined(__CUDA_ARCH__)
-    cudaMemcpy(polys,p.polys,sizeof(StartingPolynomial<Degree>)*p.polyCount,cudaMemcpyDeviceToDevice);
-#elif !defined(__CUDA_ARCH__)
     memcpy(polys,p.polys,sizeof(StartingPolynomial<Degree>)*p.polyCount);
-#endif
     return *this;
 }
 
 template<int Degree>
 template<int Degree2>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator  = (const PPolynomial<Degree2>& p){
+PPolynomial<Degree>& PPolynomial<Degree>::operator  = (const PPolynomial<Degree2>& p){
     set(p.polyCount);
     for(int i=0;i<int(polyCount);i++){
         polys[i].start=p.polys[i].start;
@@ -176,16 +147,16 @@ __host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator  = (const
 }
 
 template<int Degree>
-__host__ __device__ double PPolynomial<Degree>::operator ()(const double& t) const{
-    double v=0;
+float PPolynomial<Degree>::operator ()(const float& t) const{
+    float v=0;
     for(int i=0;i<int(polyCount) && t>polys[i].start;i++){v+=polys[i].p(t);}
     return v;
 }
 
 template<int Degree>
-__host__ __device__ double PPolynomial<Degree>::integral(const double& tMin,const double& tMax) const{
+float PPolynomial<Degree>::integral(const float& tMin,const float& tMax) const{
     int m=1;
-    double start,end,s,v=0;
+    float start,end,s,v=0;
     start=tMin;
     end=tMax;
     if(tMin>tMax){
@@ -201,9 +172,9 @@ __host__ __device__ double PPolynomial<Degree>::integral(const double& tMin,cons
     return v*m;
 }
 template<int Degree>
-__host__ __device__ double PPolynomial<Degree>::Integral(void) const{return integral(polys[0].start,polys[polyCount-1].start);}
+float PPolynomial<Degree>::Integral(void) const{return integral(polys[0].start,polys[polyCount-1].start);}
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator + (const PPolynomial<Degree>& p) const{
+PPolynomial<Degree> PPolynomial<Degree>::operator + (const PPolynomial<Degree>& p) const{
     PPolynomial q;
     int i,j;
     size_t idx=0;
@@ -222,7 +193,7 @@ __host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator + (const P
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator - (const PPolynomial<Degree>& p) const{
+PPolynomial<Degree> PPolynomial<Degree>::operator - (const PPolynomial<Degree>& p) const{
     PPolynomial q;
     int i,j;
     size_t idx=0;
@@ -241,7 +212,7 @@ __host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator - (const P
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::addScaled(const PPolynomial<Degree>& p,const double& scale){
+PPolynomial<Degree>& PPolynomial<Degree>::addScaled(const PPolynomial<Degree>& p,const float& scale){
     int i,j;
     StartingPolynomial<Degree>* oldPolys=polys;
     size_t idx=0,cnt=0,oldPolyCount=polyCount;
@@ -262,42 +233,30 @@ __host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::addScaled(const PP
         else{idx++;}
         cnt++;
     }
-#if defined(__CUDA_ARCH__)
-    cudaFree(oldPolys);
-#elif !defined(__CUDA_ARCH__)
     free(oldPolys);
-#endif
     reset(idx);
     return *this;
 }
 template<int Degree>
 template<int Degree2>
-__host__ __device__ PPolynomial<Degree+Degree2> PPolynomial<Degree>::operator * (const PPolynomial<Degree2>& p) const{
+PPolynomial<Degree+Degree2> PPolynomial<Degree>::operator * (const PPolynomial<Degree2>& p) const{
     PPolynomial<Degree+Degree2> q;
     StartingPolynomial<Degree+Degree2> *sp;
     int i,j,spCount=int(polyCount*p.polyCount);
 
-#if defined(__CUDA_ARCH__)
-    cudaMalloc((StartingPolynomial<Degree+Degree2>**)&sp,sizeof(StartingPolynomial<Degree>)*spCount);
-#elif !defined(__CUDA_ARCH__)
     sp=(StartingPolynomial<Degree+Degree2>*)malloc(sizeof(StartingPolynomial<Degree+Degree2>)*spCount);
-#endif
     for(i=0;i<int(polyCount);i++){
         for(j=0;j<int(p.polyCount);j++){
             sp[i*p.polyCount+j]=polys[i]*p.polys[j];
         }
     }
     q.set(sp,spCount);
-#if defined(__CUDA_ARCH__)
-    cudaFree(sp);
-#elif !defined(__CUDA_ARCH__)
     free(sp);
-#endif
     return q;
 }
 template<int Degree>
 template<int Degree2>
-__host__ __device__ PPolynomial<Degree+Degree2> PPolynomial<Degree>::operator * (const Polynomial<Degree2>& p) const{
+PPolynomial<Degree+Degree2> PPolynomial<Degree>::operator * (const Polynomial<Degree2>& p) const{
     PPolynomial<Degree+Degree2> q;
     q.set(polyCount);
     for(int i=0;i<int(polyCount);i++){
@@ -307,21 +266,21 @@ __host__ __device__ PPolynomial<Degree+Degree2> PPolynomial<Degree>::operator * 
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::scale(const double& s) const{
+PPolynomial<Degree> PPolynomial<Degree>::scale(const float& s) const{
     PPolynomial q;
     q.set(polyCount);
     for(size_t i=0;i<polyCount;i++){q.polys[i]=polys[i].scale(s);}
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::shift(const double& s) const{
+PPolynomial<Degree> PPolynomial<Degree>::shift(const float& s) const{
     PPolynomial q;
     q.set(polyCount);
     for(size_t i=0;i<polyCount;i++){q.polys[i]=polys[i].shift(s);}
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree-1> PPolynomial<Degree>::derivative(void) const{
+PPolynomial<Degree-1> PPolynomial<Degree>::derivative(void) const{
     PPolynomial<Degree-1> q;
     q.set(polyCount);
     for(size_t i=0;i<polyCount;i++){
@@ -331,7 +290,7 @@ __host__ __device__ PPolynomial<Degree-1> PPolynomial<Degree>::derivative(void) 
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree+1> PPolynomial<Degree>::integral(void) const{
+PPolynomial<Degree+1> PPolynomial<Degree>::integral(void) const{
     int i;
     PPolynomial<Degree+1> q;
     q.set(polyCount);
@@ -343,46 +302,46 @@ __host__ __device__ PPolynomial<Degree+1> PPolynomial<Degree>::integral(void) co
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator  += (const double &s){polys[0].p+=s;}
+PPolynomial<Degree>& PPolynomial<Degree>::operator  += (const float &s){polys[0].p+=s;}
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator  -= (const double &s){polys[0].p-=s;}
+PPolynomial<Degree>& PPolynomial<Degree>::operator  -= (const float &s){polys[0].p-=s;}
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator  *= (const double &s){
+PPolynomial<Degree>& PPolynomial<Degree>::operator  *= (const float &s){
     for(int i=0;i<int(polyCount);i++){polys[i].p*=s;}
     return *this;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree>& PPolynomial<Degree>::operator  /= (const double &s){
+PPolynomial<Degree>& PPolynomial<Degree>::operator  /= (const float &s){
     for(size_t i=0;i<polyCount;i++){polys[i].p/=s;}
     return *this;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator + (const double& s) const{
+PPolynomial<Degree> PPolynomial<Degree>::operator + (const float& s) const{
     PPolynomial q=*this;
     q+=s;
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator - (const double& s) const{
+PPolynomial<Degree> PPolynomial<Degree>::operator - (const float& s) const{
     PPolynomial q=*this;
     q-=s;
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator * (const double& s) const{
+PPolynomial<Degree> PPolynomial<Degree>::operator * (const float& s) const{
     PPolynomial q=*this;
     q*=s;
     return q;
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::operator / (const double& s) const{
+PPolynomial<Degree> PPolynomial<Degree>::operator / (const float& s) const{
     PPolynomial q=*this;
     q/=s;
     return q;
 }
 
 template<int Degree>
-__host__ __device__ void PPolynomial<Degree>::printnl(void) const{
+void PPolynomial<Degree>::printnl(void) const{
     Polynomial<Degree> p;
 
     if(!polyCount){
@@ -406,11 +365,11 @@ __host__ __device__ void PPolynomial<Degree>::printnl(void) const{
     printf("\n");
 }
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::ConstantFunction(const double& radius){
-//    if(Degree<0){
-//        fprintf(stderr,"Could not set degree %d polynomial as constant\n",Degree);
-//        exit(0);
-//    }
+PPolynomial<Degree> PPolynomial<Degree>::ConstantFunction(const float& radius){
+    if(Degree<0){
+        fprintf(stderr,"Could not set degree %d polynomial as constant\n",Degree);
+        exit(0);
+    }
     PPolynomial q;
     q.set(2);
 
@@ -423,15 +382,15 @@ __host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::ConstantFunction(co
 }
 
 template<>
-__host__ __device__ PPolynomial<0> PPolynomial<0>::GaussianApproximation(const double& width)
+PPolynomial<0> PPolynomial<0>::GaussianApproximation(const float& width)
 {
     return ConstantFunction(width);
 }
 
 template<int Degree>
-__host__ __device__ PPolynomial<Degree> PPolynomial<Degree>::GaussianApproximation(const double& width){return PPolynomial<Degree-1>::GaussianApproximation().MovingAverage(width);}
+PPolynomial<Degree> PPolynomial<Degree>::GaussianApproximation(const float& width){return PPolynomial<Degree-1>::GaussianApproximation().MovingAverage(width);}
 template<int Degree>
-__host__ __device__ PPolynomial<Degree+1> PPolynomial<Degree>::MovingAverage(const double& radius){
+PPolynomial<Degree+1> PPolynomial<Degree>::MovingAverage(const float& radius){
     PPolynomial<Degree+1> A;
     Polynomial<Degree+1> p;
     StartingPolynomial<Degree+1>* sps;
@@ -446,18 +405,14 @@ __host__ __device__ PPolynomial<Degree+1> PPolynomial<Degree>::MovingAverage(con
         sps[2*i+1].p=p.shift( radius)*-1;
     }
     A.set(sps,int(polyCount*2));
-#if defined(__CUDA_ARCH__)
-    cudaFree(sps);
-#elif !defined(__CUDA_ARCH__)
     free(sps);
-#endif
     return A*1.0/(2*radius);
 }
 
 template<int Degree>
-__host__ __device__ void PPolynomial<Degree>::getSolutions(const double& c,std::vector<double>& roots,const double& EPS,const double& min,const double& max) const{
+void PPolynomial<Degree>::getSolutions(const float& c,std::vector<float>& roots,const float& EPS,const float& min,const float& max) const{
     Polynomial<Degree> p;
-    std::vector<double> tempRoots;
+    std::vector<float> tempRoots;
 
     p.setZero();
     for(size_t i=0;i<polyCount;i++){
@@ -474,10 +429,10 @@ __host__ __device__ void PPolynomial<Degree>::getSolutions(const double& c,std::
 }
 
 template<int Degree>
-void PPolynomial<Degree>::write(FILE* fp,const int& samples,const double& min,const double& max) const{
+void PPolynomial<Degree>::write(FILE* fp,const int& samples,const float& min,const float& max) const{
     fwrite(&samples,sizeof(int),1,fp);
     for(int i=0;i<samples;i++){
-        double x=min+i*(max-min)/(samples-1);
+        float x=min+i*(max-min)/(samples-1);
         float v=(*this)(x);
         fwrite(&v,sizeof(float),1,fp);
     }
