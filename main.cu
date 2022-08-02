@@ -790,14 +790,14 @@ __host__ __device__ void getFunctionIdxOfNode(const int& key,const int &depthD,i
 
 __host__ __device__ void getEncodedFunctionIdxOfNode(const int& key,const int &depthD,int *idx){
 #if defined(__CUDA_ARCH__)
-    *idx = ((1<<depthD)-1)*(1+(1<<maxDepth)+(1<<(2*maxDepth)) );
+    *idx = ((1<<depthD)-1)*(1+(1<<(maxDepth+1))+(1<<(2*(maxDepth+1))) );
     for(int depth=depthD;depth >= 1;--depth){
         int sonKeyX = ( key >> (3 * (maxDepth-depth) + 2) ) & 1;
         int sonKeyY = ( key >> (3 * (maxDepth-depth) + 1) ) & 1;
         int sonKeyZ = ( key >> (3 * (maxDepth-depth)) ) & 1;
         *idx += sonKeyX * (1<<(depthD-depth)) +
-                sonKeyY * (1<<(depthD-depth)) * (1<<maxDepth) +
-                sonKeyZ * (1<<(depthD-depth)) * (1<<(2*maxDepth));
+                sonKeyY * (1<<(depthD-depth)) * (1<<(maxDepth+1)) +
+                sonKeyZ * (1<<(depthD-depth)) * (1<<(2*(maxDepth+1)));
     }
 #elif !defined(__CUDA_ARCH__)
     *idx = ((1<<depthD)-1)*(1+(1<<maxDepth_h)+(1<<(2*maxDepth_h)) );
@@ -957,15 +957,18 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
 //                getFunctionIdxOfNode(NodeArray[i].key,depthD,idxO_1);
 //                getFunctionIdxOfNode(NodeArray[start_D+Node_D_Idx].key,depthD,idxO_2);
 
+                int decode_offset1=(1<<(maxDepth+1));
+                int decode_offset2=(1<<(2*(maxDepth+1)));
+
                 int encode_idx=NodeIdxInFunction[i];
-                idxO_1[0]=encode_idx%(1<<maxDepth);
-                idxO_1[1]=(encode_idx/(1<<maxDepth))%(1<<maxDepth);
-                idxO_1[2]=encode_idx/(1<<(2*maxDepth));
+                idxO_1[0]=encode_idx%decode_offset1;
+                idxO_1[1]=(encode_idx/decode_offset1)%decode_offset1;
+                idxO_1[2]=encode_idx/decode_offset2;
 
                 encode_idx=NodeIdxInFunction[start_D+Node_D_Idx];
-                idxO_2[0]=encode_idx%(1<<maxDepth);
-                idxO_2[1]=(encode_idx/(1<<maxDepth))%(1<<maxDepth);
-                idxO_2[2]=encode_idx/(1<<(2*maxDepth));
+                idxO_2[0]=encode_idx%decode_offset1;
+                idxO_2[1]=(encode_idx/decode_offset1)%decode_offset1;
+                idxO_2[2]=encode_idx/decode_offset2;
 
                 int scratch[3];
                 scratch[0] = idxO_1[0] * resolution + idxO_2[0];
@@ -1112,6 +1115,12 @@ int main() {
                                                        dot_F_DF,
                                                        Divergence);
     cudaDeviceSynchronize();
+
+//    double *Divergence_h=(double *)malloc(sizeof(double)*NodeArray_sz);
+//    cudaMemcpy(Divergence_h,Divergence,sizeof(double)*NodeArray_sz,cudaMemcpyDeviceToHost);
+//    for(int i=BaseAddressArray[5];i<BaseAddressArray[6];++i){
+//        printf("%lf\n",Divergence_h[i]);
+//    }
 
     double mid3=cpuSecond();
     printf("Compute finer depth nodes' divergence takes:%lfs\n",mid3-mid2);
