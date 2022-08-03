@@ -20,6 +20,7 @@
 #include "FunctionData.cuh"
 #include "BinaryNode.cuh"
 #include "ConfirmedPPolynomial.cuh"
+#include "ConfirmedSparseMatrix.cuh"
 
 
 //#define FORCE_UNIT_NORMALS 1
@@ -1201,6 +1202,7 @@ int main() {
     printf("Compute finer depth nodes' divergence takes:%lfs\n",mid3-mid2);
 
 
+    // maybe can be optimized by running all nodes at the same time.
     nByte=sizeof(double) * NodeDNum;
     for(int i=4;i>=0;--i){
         for(int j=BaseAddressArray[i];j<BaseAddressArray[i+1];++j){

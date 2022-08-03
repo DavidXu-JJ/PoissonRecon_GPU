@@ -18,7 +18,10 @@ add_executable(GPU_PoissonRecon main.cu
         Polynomial.cuh Polynomial.inl
         PPolynomial.cuh PPolynomial.inl
         FunctionData.cuh FunctionData.inl
-        ConfirmedPPolynomial.cuh)
+        ConfirmedPPolynomial.cuh
+        Allocator.cuh Vector.cuh Vector.inl
+        SparseMatrix.cuh SparseMatrix.inl
+        ConfirmedSparseMatrix.cuh ConfirmedVector.cuh)
 
 set_target_properties(GPU_PoissonRecon PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)

@@ -2,6 +2,9 @@
 // Created by davidxu on 22-8-2.
 //
 
+#ifndef GPU_POISSONRECON_CONFIRMEDPPOLYNOMIAL_CUH
+#define GPU_POISSONRECON_CONFIRMEDPPOLYNOMIAL_CUH
+
 #include "PPolynomial.cuh"
 
 template<int Degree,int PolyCount>
@@ -55,3 +58,5 @@ __device__ float value(ConfirmedPPolynomial<Degree,PolyCount> *cp,const float &v
     }
     return res;
 }
+
+#endif //GPU_POISSONRECON_CONFIRMEDPPOLYNOMIAL_CUH
