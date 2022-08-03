@@ -836,18 +836,25 @@ __global__ void computeVectorField(ConfirmedPPolynomial<2,4> *BaseFunctionMaxDep
         BinaryNode<float>::CenterAndWidth(idx[1],o_c.coords[1],width);
         BinaryNode<float>::CenterAndWidth(idx[2],o_c.coords[2],width);
         int IdxInMaxDepth=i-left;
+        Point3D<float> val={0,0,0};
         for(int j=0;j<27;++j){
             int neigh=NodeArray[i].neighs[j];
             if(neigh!=-1){
                 for(int k=0;k<NodeArray[neigh].pnum;++k){
                     int pointIdx=NodeArray[neigh].pidx+k;
                     double weight= F_center_width_Point(*BaseFunctionMaxDepth_d,samplePoints_d[pointIdx],width,o_c);
-                    VectorField[IdxInMaxDepth].coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
-                    VectorField[IdxInMaxDepth].coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
-                    VectorField[IdxInMaxDepth].coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
+                    val.coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
+                    val.coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
+                    val.coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
+//                    VectorField[IdxInMaxDepth].coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
+//                    VectorField[IdxInMaxDepth].coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
+//                    VectorField[IdxInMaxDepth].coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
                 }
             }
         }
+        VectorField[IdxInMaxDepth].coords[0] += val.coords[0];
+        VectorField[IdxInMaxDepth].coords[1] += val.coords[1];
+        VectorField[IdxInMaxDepth].coords[2] += val.coords[2];
 //        printf("%d %f\n",IdxInMaxDepth,VectorField[IdxInMaxDepth].coords[0]);
     }
 }
@@ -860,6 +867,7 @@ __host__ __device__ float DotProduct(const Point3D<float> &p1,const Point3D<floa
     return res;
 }
 
+//deprecated
 __global__ void precomputeFunctionIdxOfNode(int *BaseAddressArray_d,OctNode *NodeArray,int NodeArray_sz,int *NodeIdxInFunction){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -880,6 +888,7 @@ __global__ void precomputeEncodedFunctionIdxOfNode(int *BaseAddressArray_d,OctNo
     }
 }
 
+//deprecated
 __global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdxInFunction,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,const double *dot_F_DF,double *Divergence) {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -941,8 +950,11 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     offset+=left;
-    int start_D=BaseAddressArray_d[maxDepth];
+    int maxD=maxDepth;
+    int start_D=BaseAddressArray_d[maxD];
+    int res=resolution;
     for(int i=offset;i<right;i+=stride) {
+        double val=0;
 #pragma unroll
         for(int j=0;j<27;++j){
             int neighIdx=NodeArray[i].neighs[j];
@@ -953,12 +965,8 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
 
                 int idxO_1[3],idxO_2[3];
 
-//                int depthD= getDepth(i,BaseAddressArray_d);
-//                getFunctionIdxOfNode(NodeArray[i].key,depthD,idxO_1);
-//                getFunctionIdxOfNode(NodeArray[start_D+Node_D_Idx].key,depthD,idxO_2);
-
-                int decode_offset1=(1<<(maxDepth+1));
-                int decode_offset2=(1<<(2*(maxDepth+1)));
+                int decode_offset1=(1<<(maxD+1));
+                int decode_offset2=(1<<(2*(maxD+1)));
 
                 int encode_idx=NodeIdxInFunction[i];
                 idxO_1[0]=encode_idx%decode_offset1;
@@ -971,27 +979,18 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
                 idxO_2[2]=encode_idx/decode_offset2;
 
                 int scratch[3];
-                scratch[0] = idxO_1[0] * resolution + idxO_2[0];
-                scratch[1] = idxO_1[1] * resolution + idxO_2[1];
-                scratch[2] = idxO_1[2] * resolution + idxO_2[2];
-
-//                int scratch[3];
-//                int idx_st1=3*i;
-//                int idx_st2=3*(start_D+Node_D_Idx);
-//                scratch[0] = NodeIdxInFunction[idx_st1] * resolution + NodeIdxInFunction[idx_st2];
-//                scratch[1] = NodeIdxInFunction[idx_st1+1] * resolution + NodeIdxInFunction[idx_st2+1];
-//                scratch[2] = NodeIdxInFunction[idx_st1+2] * resolution + NodeIdxInFunction[idx_st2+1];
+                scratch[0] = idxO_1[0] * res + idxO_2[0];
+                scratch[1] = idxO_1[1] * res + idxO_2[1];
+                scratch[2] = idxO_1[2] * res + idxO_2[2];
 
                 Point3D<float> uo;
                 uo.coords[0]=dot_F_DF[scratch[0]];
                 uo.coords[1]=dot_F_DF[scratch[1]];
                 uo.coords[2]=dot_F_DF[scratch[2]];
-                Divergence[i] += DotProduct(vo,uo);
+                val += DotProduct(vo,uo);
             }
         }
-//        if(Divergence[i]!=0) {
-//            printf("%d %lf\n", i, Divergence[i]);
-//        }
+        Divergence[i] += val;
     }
 }
 
