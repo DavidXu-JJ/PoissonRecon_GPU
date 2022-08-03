@@ -349,11 +349,13 @@ __global__ void updateParentChildren(int *BaseAddressArray_d,OctNode *NodeArray,
         }
         if(i == 0){
             NodeArray[i].parent=-1;
+#pragma unroll
             for(int child=0;child<8;++child){
                 NodeArray[i].children[child] += BaseAddressArray_d[depth+1];
             }
         }else {
             NodeArray[i].parent += BaseAddressArray_d[depth - 1];
+#pragma unroll
             for(int child=0;child<8;++child){
                 if(NodeArray[i].children[child]!=0)
                     NodeArray[i].children[child] += BaseAddressArray_d[depth+1];
@@ -994,7 +996,81 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
     }
 }
 
-__global__ void computeCoarserNodesDivergence(){
+__global__ void computeCoverNums(OctNode *NodeArray,int idx,int *coverNums){
+    *coverNums=0;
+    for(int i=0;i<27;++i){
+        int neigh=NodeArray[idx].neighs[i];
+        if(neigh != -1){
+            *(coverNums+i+1) = NodeArray[neigh].dnum + *(coverNums+i);
+        }else{
+            *(coverNums+i+1) = *(coverNums+i);
+        }
+    }
+}
+
+__device__ int getNeighIdx(int *coverNums,int threadId){
+    int neighIdx=0;
+    for(neighIdx=0;neighIdx<27;++neighIdx){
+        if(coverNums[neighIdx] <= threadId && coverNums[neighIdx+1] > threadId){
+            break;
+        }
+    }
+    return neighIdx;
+}
+
+__global__ void generateDIdxArray(OctNode *NodeArray,int idx,int *coverNums,int *DIdxArray){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int size=coverNums[27];
+    for(int i=offset;i<size;i+=stride){
+        int neighIdx= getNeighIdx(coverNums,i);
+        int st=NodeArray[ NodeArray[idx].neighs[neighIdx] ].didx;
+        DIdxArray[i]= st + i - coverNums[neighIdx];
+    }
+}
+
+
+__global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNums,int *BaseAddressArray_d,
+                                              int *NodeIdxInFunction,
+                                              Point3D<float> *VectorField,const double *dot_F_DF,
+                                              int idx,double *divg){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int maxD=maxDepth;
+    int start_D=BaseAddressArray_d[maxD];
+    int res=resolution;
+    for(int i=offset;i<coverNums;i+=stride){
+        int DIdx=DIdxArray[i];
+        const Point3D<float> &vo = VectorField[DIdx];
+
+        int idxO_1[3],idxO_2[3];
+
+        int decode_offset1=(1<<(maxD+1));
+        int decode_offset2=(1<<(2*(maxD+1)));
+
+        int encode_idx=NodeIdxInFunction[idx];
+        idxO_1[0]=encode_idx%decode_offset1;
+        idxO_1[1]=(encode_idx/decode_offset1)%decode_offset1;
+        idxO_1[2]=encode_idx/decode_offset2;
+
+        encode_idx=NodeIdxInFunction[start_D+DIdx];
+        idxO_2[0]=encode_idx%decode_offset1;
+        idxO_2[1]=(encode_idx/decode_offset1)%decode_offset1;
+        idxO_2[2]=encode_idx/decode_offset2;
+
+        int scratch[3];
+        scratch[0] = idxO_1[0] * res + idxO_2[0];
+        scratch[1] = idxO_1[1] * res + idxO_2[1];
+        scratch[2] = idxO_1[2] * res + idxO_2[2];
+
+        Point3D<float> uo;
+        uo.coords[0]=dot_F_DF[scratch[0]];
+        uo.coords[1]=dot_F_DF[scratch[1]];
+        uo.coords[2]=dot_F_DF[scratch[2]];
+        divg[i] += DotProduct(vo,uo);
+    }
 }
 
 int main() {
@@ -1123,5 +1199,48 @@ int main() {
 
     double mid3=cpuSecond();
     printf("Compute finer depth nodes' divergence takes:%lfs\n",mid3-mid2);
+
+
+    nByte=sizeof(double) * NodeDNum;
+    for(int i=4;i>=0;--i){
+        for(int j=BaseAddressArray[i];j<BaseAddressArray[i+1];++j){
+            int *coverNums=NULL;
+            CHECK(cudaMalloc((int**)&coverNums,sizeof(int) * 28));
+            computeCoverNums<<<1,1>>>(NodeArray,j,coverNums);
+            cudaDeviceSynchronize();
+            int coverNums_h[28];
+            CHECK(cudaMemcpy(coverNums_h,coverNums,sizeof(int) * 28,cudaMemcpyDeviceToHost));
+//            printf("%d,%d\n",j,coverNums_h);
+
+            double *divg=NULL;
+            nByte=sizeof(double)*coverNums_h[27];
+            CHECK(cudaMalloc((double**)&divg,nByte));
+            CHECK(cudaMemset(divg,0,nByte));
+
+            int *DIdxArray=NULL;
+            nByte=sizeof(int)*coverNums_h[27];
+            CHECK(cudaMalloc((int**)&DIdxArray,nByte));
+            CHECK(cudaMemset(DIdxArray,0,nByte));
+
+            generateDIdxArray<<<grid,block>>>(NodeArray,j,coverNums,DIdxArray);
+            cudaDeviceSynchronize();
+
+            computeEncodedCoarserNodesDivergence<<<grid,block>>>(DIdxArray,coverNums_h[27],BaseAddressArray_d,
+                                                                 NodeIdxInFunction,
+                                                                 VectorField,dot_F_DF,
+                                                                 j,divg);
+            cudaDeviceSynchronize();
+            thrust::device_ptr<double> divg_ptr=thrust::device_pointer_cast<double>(divg);
+            double val=thrust::reduce(divg_ptr,divg_ptr+coverNums_h[27]);
+
+            CHECK(cudaMemcpy(Divergence+j,&val,sizeof(double),cudaMemcpyHostToDevice));
+
+            cudaFree(DIdxArray);
+            cudaFree(divg);
+        }
+    }
+
+    double mid4=cpuSecond();
+    printf("Compute coarser depth nodes' divergence takes:%lfs\n",mid4-mid3);
 
 }
