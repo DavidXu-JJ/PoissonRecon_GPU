@@ -38,23 +38,23 @@ class Vector
 public:
     Vector();
     Vector( const Vector<T>& V );
-    Vector( size_t N );
-    Vector( size_t N, T* pV );
+    Vector( int N );
+    Vector( int N, T* pV );
     ~Vector();
 
-    const T& operator () (size_t i) const;
-    T& operator () (size_t i);
-    const T& operator [] (size_t i) const;
-    T& operator [] (size_t i);
+    __host__ __device__ const T& operator () (int i) const;
+    __host__ __device__ T& operator () (int i);
+    __host__ __device__ const T& operator [] (int i) const;
+    __host__ __device__ T& operator [] (int i);
 
     /**     m_pV[0...m_N-1] are set to zero
      *      m_N doesn't change          */
-    void SetZero();
+    __host__ __device__ void SetZero();
 
-    size_t Dimensions() const;
+    __host__ __device__ int Dimensions() const;
 
     /**     old memory will be cleared  */
-    void Resize( size_t N );
+    void Resize( int N );
 
     Vector operator * (const T& A) const;
     Vector operator / (const T& A) const;
@@ -62,33 +62,69 @@ public:
     Vector operator - (const Vector& V) const;
     Vector operator + (const Vector& V) const;
 
-    Vector& operator *= (const T& A);
-    Vector& operator /= (const T& A);
-    Vector& operator += (const Vector& V);
-    Vector& operator -= (const Vector& V);
+    __host__ __device__ Vector& operator *= (const T& A);
+    __host__ __device__ Vector& operator /= (const T& A);
+    __host__ __device__ Vector& operator += (const Vector& V);
+    __host__ __device__ Vector& operator -= (const Vector& V);
 
-    Vector& AddScaled(const Vector& V,const T& scale);
-    Vector& SubtractScaled(const Vector& V,const T& scale);
+    __host__ __device__ Vector& AddScaled(const Vector& V,const T& scale);
+    __host__ __device__ Vector& SubtractScaled(const Vector& V,const T& scale);
     /**     $out will be the same size as V1    */
-    static void Add(const Vector& V1,const T& scale1,const Vector& V2,const T& scale2,Vector& Out);
-    static void Add(const Vector& V1,const T& scale1,const Vector& V2,Vector& Out);
+    __host__ __device__ static void Add(const Vector& V1,const T& scale1,const Vector& V2,const T& scale2,Vector& Out);
+    __host__ __device__ static void Add(const Vector& V1,const T& scale1,const Vector& V2,Vector& Out);
 
     Vector operator - () const;
 
     Vector& operator = (const Vector& V);
 
-    T Dot( const Vector& V ) const;
+    __host__ __device__ T Dot( const Vector& V ) const;
 
-    T Length() const;
+    __host__ __device__ T Length() const;
 
-    T Norm( size_t Ln ) const;
-    void Normalize();
+    __host__ __device__ T Norm( int Ln ) const;
+    __host__ __device__ void Normalize();
 
     T* m_pV;
 protected:
-    size_t m_N;
+    int m_N;
 
 };
+
+template<class T>
+__host__ void copySingleVector(Vector<T> *v_h,Vector<T> *&v_d){
+    T *d_addr=NULL;
+    int nByte=sizeof(T) * v_h->Dimensions();
+    cudaMalloc((T**)&d_addr,nByte);
+    cudaMemcpy(d_addr,v_h->m_pV,nByte,cudaMemcpyHostToDevice);
+    T *h_addr = v_h->m_pV;
+    v_h->m_pV = d_addr;
+    cudaMalloc((Vector<T> **)&v_d,sizeof(Vector<T>));
+    cudaMemcpy(v_d,v_h,sizeof(Vector<T>),cudaMemcpyHostToDevice);
+    v_h->m_pV = h_addr;
+}
+
+template<class T>
+__host__ void copyWholeVectorArray(Vector<T> *v_h,Vector<T> *&v_d,int size){
+    int nByte;
+    std::vector<T*> ptr_v;
+    for(int i=0;i<size;++i){
+        nByte=sizeof(T) * (v_h+i)->Dimensions();
+        T *d_addr=NULL;
+        cudaMalloc((T**)&d_addr,nByte);
+        cudaMemcpy(d_addr,(v_h+i)->m_pV,nByte,cudaMemcpyHostToDevice);
+        ptr_v.push_back((v_h+i)->m_pV);
+        (v_h+i)->m_pV=d_addr;
+    }
+
+    nByte=sizeof(Vector<T>) * size;
+    cudaMalloc((Vector<T>**)&v_d,nByte);
+    cudaMemcpy(v_d,v_h,nByte,cudaMemcpyHostToDevice);
+
+    for(int i=0;i<size;++i){
+        (v_h+i)->m_pV=ptr_v[i];
+    }
+}
+
 
 template<class T,int Dim>
 class NVector
@@ -96,21 +132,21 @@ class NVector
 public:
     NVector();
     NVector( const NVector& V );
-    NVector( size_t N );
-    NVector( size_t N, T* pV );
+    NVector( int N );
+    NVector( int N, T* pV );
     ~NVector();
 
-    const T* operator () (size_t i) const;
-    T* operator () (size_t i);
-    const T* operator [] (size_t i) const;
-    T* operator [] (size_t i);
+    const T* operator () (int i) const;
+    T* operator () (int i);
+    const T* operator [] (int i) const;
+    T* operator [] (int i);
 
     void SetZero();
 
-    size_t Dimensions() const;
+    int Dimensions() const;
 
     /**     Alloc N*Dim*sizeof(T)   memory  */
-    void Resize( size_t N );
+    void Resize( int N );
 
     NVector operator * (const T& A) const;
     NVector operator / (const T& A) const;
@@ -135,12 +171,12 @@ public:
 
     T Length() const;
 
-    T Norm( size_t Ln ) const;
+    T Norm( int Ln ) const;
     void Normalize();
 
     T* m_pV;
 protected:
-    size_t m_N;
+    int m_N;
 
 };
 

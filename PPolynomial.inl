@@ -45,6 +45,7 @@ __host__ __device__ StartingPolynomial<Degree>& StartingPolynomial<Degree>::oper
     start=sp.start;
     for(int i=0;i<=Degree;++i)
         p.coefficients[i]=sp.p.coefficients[i];
+    return *this;
 }
 template<int Degree>
 __host__ __device__ StartingPolynomial<Degree> StartingPolynomial<Degree>::scale(const float& s) const{

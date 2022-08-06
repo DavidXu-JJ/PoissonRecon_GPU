@@ -35,7 +35,11 @@ DAMAGE.
 // Polynomial //
 ////////////////
 template<int Degree>
-Polynomial<Degree>::Polynomial(void){memset(coefficients,0,sizeof(float)*(Degree+1));}
+__host__ __device__ Polynomial<Degree>::Polynomial(void){
+#if !defined(__CUDA_ARCH__)
+    memset(coefficients,0,sizeof(float)*(Degree+1));
+#endif
+}
 template<int Degree>
 template<int Degree2>
 Polynomial<Degree>::Polynomial(const Polynomial<Degree2>& P){
@@ -170,7 +174,7 @@ Polynomial<Degree> Polynomial<Degree>::operator - (void) const{
 }
 template<int Degree>
 template<int Degree2>
-Polynomial<Degree+Degree2> Polynomial<Degree>::operator * (const Polynomial<Degree2>& p) const{
+__host__ __device__ Polynomial<Degree+Degree2> Polynomial<Degree>::operator * (const Polynomial<Degree2>& p) const{
     Polynomial<Degree+Degree2> q;
     for(int i=0;i<=Degree;i++){for(int j=0;j<=Degree2;j++){q.coefficients[i+j]+=coefficients[i]*p.coefficients[j];}}
     return q;

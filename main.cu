@@ -21,6 +21,7 @@
 #include "BinaryNode.cuh"
 #include "ConfirmedPPolynomial.cuh"
 #include "ConfirmedSparseMatrix.cuh"
+#include "CG_CUDA.cuh"
 
 
 //#define FORCE_UNIT_NORMALS 1
@@ -79,8 +80,7 @@ int LUTchild_h[8][27]={
 };
 
 struct markCompact{
-    __host__ __device__
-    bool operator()(const long long x){
+    __device__ bool operator()(const long long x){
         return ( x & (1ll<<markOffset) ) > 0;
     }
 };
@@ -431,8 +431,9 @@ __global__ void computeNeighbor(OctNode *NodeArray,int left,int right,int depthD
         for(int j=0;j<27;++j){
             int sonKey = ( NodeArray[i].key >> (3 * (maxDepth-depthD)) ) & 7;
             int parentIdx = NodeArray[i].parent;
-            if(NodeArray[ parentIdx ].neighs[LUTparent[sonKey][j]] != -1){
-                NodeArray[i].neighs[j] = NodeArray[ NodeArray[parentIdx].neighs[LUTparent[sonKey][j]] ].children[LUTchild[sonKey][j]];
+            int neighParent = NodeArray[ parentIdx ].neighs[LUTparent[sonKey][j]];
+            if(neighParent != -1){
+                NodeArray[i].neighs[j] = NodeArray[ neighParent ].children[LUTchild[sonKey][j]];
             }else{
                 NodeArray[i].neighs[j]= -1;
             }
@@ -1146,7 +1147,7 @@ int main() {
     printf("CPU generate precomputed inner product table takes:%lfs\n",cpu_ed-cpu_st);
 
 
-    ConfirmedPPolynomial<2,4> BaseFunctionMaxDepth(ReconstructionFunction.scale(1.0/(1<<maxDepth)));
+    ConfirmedPPolynomial<2,4> BaseFunctionMaxDepth(ReconstructionFunction.scale(1.0/(1<<maxDepth_h)));
     nByte=sizeof(BaseFunctionMaxDepth);
     ConfirmedPPolynomial<2,4> *BaseFunctionMaxDepth_d= NULL;
     CHECK(cudaMalloc((ConfirmedPPolynomial<2,4>**)&BaseFunctionMaxDepth_d,nByte));
@@ -1228,9 +1229,9 @@ int main() {
             cudaDeviceSynchronize();
 
             computeEncodedCoarserNodesDivergence<<<grid,block>>>(DIdxArray,coverNums_h[27],BaseAddressArray_d,
-                                                                 NodeIdxInFunction,
-                                                                 VectorField,dot_F_DF,
-                                                                 j,divg);
+                                                                                 NodeIdxInFunction,
+                                                                                 VectorField,dot_F_DF,
+                                                                                 j,divg);
             cudaDeviceSynchronize();
             thrust::device_ptr<double> divg_ptr=thrust::device_pointer_cast<double>(divg);
             double val=thrust::reduce(divg_ptr,divg_ptr+coverNums_h[27]);
@@ -1244,5 +1245,31 @@ int main() {
 
     double mid4=cpuSecond();
     printf("Compute coarser depth nodes' divergence takes:%lfs\n",mid4-mid3);
+
+
+    //solve the x
+//    double *Solution=NULL;
+//    nByte=sizeof(double) * NodeArray_sz;
+//    CHECK(cudaMalloc((double**)&Solution,nByte));
+//    CHECK(cudaMemset(Solution,0,nByte));
+//
+//    for(int i=0;i<=maxDepth_h;++i){
+//        int dim = NodeArrayCount_h[i];
+//    }
+
+    const int m = 4;
+    const int nnzA = 8;
+    int csrRowPtrA[] = {1, 4, 6, 8, 9};
+    int csrColIndA[] = {1,2,3, 1, 2, 1, 3, 4};
+    double csrValA[]= {4,1,7,1,3,7,3,9};
+    double b[] = {1,2,7,8};
+
+    double *x;
+
+    solveCG_HostToDevice(m,nnzA,csrRowPtrA,csrColIndA,csrValA,b,x);
+
+    for(int i=0;i<m;++i){
+        printf("%lf ",x[i]);
+    }
 
 }

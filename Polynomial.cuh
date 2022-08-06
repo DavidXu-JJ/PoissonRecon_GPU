@@ -36,7 +36,7 @@ class Polynomial{
 public:
     float coefficients[Degree+1];
 
-    Polynomial(void);
+    __host__ __device__ Polynomial(void);
     template<int Degree2>
     Polynomial(const Polynomial<Degree2>& P);
 
@@ -62,7 +62,7 @@ public:
 
     /**     Polynomial multiplication	*/
     template<int Degree2>
-    Polynomial<Degree+Degree2>  operator *  (const Polynomial<Degree2>& p) const;
+    __host__ __device__ Polynomial<Degree+Degree2>  operator *  (const Polynomial<Degree2>& p) const;
 
     Polynomial& operator += (const float& s);
     Polynomial& operator -= (const float& s);

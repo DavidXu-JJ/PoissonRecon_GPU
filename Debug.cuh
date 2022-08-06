@@ -5,7 +5,7 @@
 #ifndef GPU_POISSONRECON_DEBUG_CUH
 #define GPU_POISSONRECON_DEBUG_CUH
 
-#define DEBUG 1
+//#define DEBUG 1
 
 #ifdef DEBUG
 #define CHECK(call)\

@@ -30,7 +30,6 @@ DAMAGE.
 #define __SPARSEMATRIX_HPP
 
 #include "Vector.cuh"
-#include "Allocator.cuh"
 
 template <class T>
 struct MatrixEntry
@@ -54,13 +53,7 @@ struct NMatrixEntry
  */
 template<class T> class SparseMatrix
 {
-private:
-    static int UseAlloc;
 public:
-    static Allocator<MatrixEntry<T> > Allocator;
-    static int UseAllocator(void);
-    static void SetAllocator(const int& blockSize);
-
     int rows;
     int* rowSizes;
     MatrixEntry<T>** m_ppElements;
@@ -119,13 +112,7 @@ public:
 };
 template<class T,int Dim> class SparseNMatrix
 {
-private:
-    static int UseAlloc;
 public:
-    static Allocator<NMatrixEntry<T,Dim> > Allocator;
-    static int UseAllocator(void);
-    static void SetAllocator(const int& blockSize);
-
     int rows;
     int* rowSizes;
     NMatrixEntry<T,Dim>** m_ppElements;

@@ -1,12 +1,14 @@
 cmake_minimum_required(VERSION 3.22)
-set(CMAKE_CUDA_COMPILER  /usr/local/cuda/bin/nvcc)
-project(GPU_PoissonRecon CUDA)
+
+project(GPU_PoissonRecon LANGUAGES CXX CUDA)
 
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
 
 set(CMAKE_CUDA_STANDARD 14)
 
 #set(CMAKE_CUDA_FLAGS "--expt-extended-lambda")
+
+find_package(CUDA 11.7 REQUIRED)
 
 add_executable(GPU_PoissonRecon main.cu
         CmdLineParser.cuh CmdLineParser.inl CmdLineParser.cu
@@ -21,7 +23,10 @@ add_executable(GPU_PoissonRecon main.cu
         ConfirmedPPolynomial.cuh
         Allocator.cuh Vector.cuh Vector.inl
         SparseMatrix.cuh SparseMatrix.inl
-        ConfirmedSparseMatrix.cuh ConfirmedVector.cuh)
+        ConfirmedSparseMatrix.cuh ConfirmedVector.cuh
+        CG_CUDA.cuh cusolver_utils.h)
 
 set_target_properties(GPU_PoissonRecon PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
+
+target_link_libraries( GPU_PoissonRecon ${CUDA_cusparse_LIBRARY} ${CUDA_cusolver_LIBRARY} ${CUDA_cublas_LIBRARY})

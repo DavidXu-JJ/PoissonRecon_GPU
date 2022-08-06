@@ -32,20 +32,7 @@ DAMAGE.
 ///////////////////
 //  SparseMatrix //
 ///////////////////
-///////////////////////////////////////////
-// Static Allocator Methods and Memebers //
-///////////////////////////////////////////
-template<class T> int SparseMatrix<T>::UseAlloc=0;
-template<class T> Allocator<MatrixEntry<T> > SparseMatrix<T>::Allocator;
-template<class T> int SparseMatrix<T>::UseAllocator(void){return UseAlloc;}
-template<class T>
-void SparseMatrix<T>::SetAllocator(const int& blockSize){
-    if(blockSize>0){
-        UseAlloc=1;
-        Allocator.set(blockSize);
-    }
-    else{UseAlloc=0;}
-}
+
 ///////////////////////////////////////
 // SparseMatrix Methods and Memebers //
 ///////////////////////////////////////
@@ -95,7 +82,6 @@ void SparseMatrix<T>::Resize( int r )
 {
     int i;
     if(rows>0){
-        if(!UseAlloc){for(i=0;i<rows;i++){if(rowSizes[i]){free(m_ppElements[i]);}}}
         free(m_ppElements);
         free(rowSizes);
     }
@@ -110,11 +96,8 @@ void SparseMatrix<T>::Resize( int r )
 template<class T>
 void SparseMatrix<T>::SetRowSize(int row,int count){
     if(row>=0 && row<rows){
-        if(UseAlloc){m_ppElements[row]=Allocator.newElements(count);}
-        else{
-            if(rowSizes[row]){free(m_ppElements[row]);}
-            if(count>0){m_ppElements[row]=(MatrixEntry<T>*)malloc(sizeof(MatrixEntry<T>)*count);}
-        }
+        if(rowSizes[row]){free(m_ppElements[row]);}
+        if(count>0){m_ppElements[row]=(MatrixEntry<T>*)malloc(sizeof(MatrixEntry<T>)*count);}
         rowSizes[row]=count;
     }
 }
@@ -295,20 +278,7 @@ int SparseMatrix<T>::Solve(const SparseMatrix<T>& M,const Vector<T>& b,const int
 ////////////////////
 //  SparseNMatrix //
 ////////////////////
-///////////////////////////////////////////
-// Static Allocator Methods and Memebers //
-///////////////////////////////////////////
-template<class T,int Dim> int SparseNMatrix<T,Dim>::UseAlloc=0;
-template<class T,int Dim> Allocator<NMatrixEntry<T,Dim> > SparseNMatrix<T,Dim>::Allocator;
-template<class T,int Dim> int SparseNMatrix<T,Dim>::UseAllocator(void){return UseAlloc;}
-template<class T,int Dim>
-void SparseNMatrix<T,Dim>::SetAllocator(const int& blockSize){
-    if(blockSize>0){
-        UseAlloc=1;
-        Allocator.set(blockSize);
-    }
-    else{UseAlloc=0;}
-}
+
 ////////////////////////////////////////
 // SparseNMatrix Methods and Memebers //
 ////////////////////////////////////////
@@ -358,7 +328,6 @@ void SparseNMatrix<T,Dim>::Resize( int r )
 {
     int i;
     if(rows>0){
-        if(!UseAlloc){for(i=0;i<rows;i++){if(rowSizes[i]){free(m_ppElements[i]);}}}
         free(m_ppElements);
         free(rowSizes);
     }
@@ -373,11 +342,8 @@ void SparseNMatrix<T,Dim>::Resize( int r )
 template<class T,int Dim>
 void SparseNMatrix<T,Dim>::SetRowSize(int row,int count){
     if(row>=0 && row<rows){
-        if(UseAlloc){m_ppElements[row]=Allocator.newElements(count);}
-        else{
-            if(rowSizes[row]){free(m_ppElements[row]);}
-            if(count>0){m_ppElements[row]=(NMatrixEntry<T,Dim>*)malloc(sizeof(NMatrixEntry<T,Dim>)*count);}
-        }
+        if(rowSizes[row]){free(m_ppElements[row]);}
+        if(count>0){m_ppElements[row]=(NMatrixEntry<T,Dim>*)malloc(sizeof(NMatrixEntry<T,Dim>)*count);}
         rowSizes[row]=count;
     }
 }
@@ -430,7 +396,7 @@ Vector<T2> SparseNMatrix<T,Dim>::operator * (const NVector<T2,Dim>& V) const
 
     for (int i=0; i<rows; i++)
     {
-        T2 temp();
+        T2 temp(0);
         for(int ii=0;ii<rowSizes[i];ii++){
             for(int jj=0;jj<Dim;jj++){temp+=m_ppElements[i][ii].Value[jj]*V.m_pV[m_ppElements[i][ii].N][jj];}
         }
