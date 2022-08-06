@@ -25,9 +25,16 @@
 
 
 //#define FORCE_UNIT_NORMALS 1
+template<class Real>
+__global__ void outputDeviceArray(Real *d_addr,int size) {
+    printf("print array:\n");
+    for(int i=0;i<size;++i) {
+        printf("%lf\n",d_addr[i]);
+    }
+}
 
 // make readable to device  ?
-__constant__ float EPSILON=float(1e-6);
+__constant__ double EPSILON=float(1e-6);
 __constant__ float ROUND_EPS=float(1e-5);
 __constant__ int maxDepth=9;
 __constant__ int markOffset=31;
@@ -80,7 +87,7 @@ int LUTchild_h[8][27]={
 };
 
 struct markCompact{
-    __device__ bool operator()(const long long x){
+    __device__ bool operator()(const long long &x){
         return ( x & (1ll<<markOffset) ) > 0;
     }
 };
@@ -746,7 +753,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
 
 }
 
-__host__ __device__ int getDepth(const int& idxOfNodeArray,int *BaseAddressArray){
+__host__ __device__ int getDepth(const int& idxOfNodeArray,int *&BaseAddressArray){
     int depth=0;
 #if defined(__CUDA_ARCH__)
     for(depth=0;depth<maxDepth;++depth){
@@ -820,9 +827,9 @@ __device__ double F_center_width_Point(const ConfirmedPPolynomial<2,4> &BaseFunc
     ConfirmedPPolynomial<2,4> thisFunction_X = BaseFunctionMaxDepth_d.shift(center.coords[0]);
     ConfirmedPPolynomial<2,4> thisFunction_Y = BaseFunctionMaxDepth_d.shift(center.coords[1]);
     ConfirmedPPolynomial<2,4> thisFunction_Z = BaseFunctionMaxDepth_d.shift(center.coords[2]);
-    float x=(thisFunction_X,point.coords[0]);
-    float y=(thisFunction_Y,point.coords[1]);
-    float z=(thisFunction_Z,point.coords[2]);
+    float x=value(thisFunction_X,point.coords[0]);
+    float y=value(thisFunction_Y,point.coords[1]);
+    float z=value(thisFunction_Z,point.coords[2]);
     return x*y*z;
 }
 
@@ -949,7 +956,7 @@ __global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdx
     }
 }
 
-__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdxInFunction,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField,const double *dot_F_DF,double *Divergence) {
+__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int *EncodedNodeIdxInFunction, OctNode *NodeArray, int left, int right, Point3D<float> *VectorField, const double *dot_F_DF, double *Divergence) {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -957,6 +964,8 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
     int maxD=maxDepth;
     int start_D=BaseAddressArray_d[maxD];
     int res=resolution;
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
     for(int i=offset;i<right;i+=stride) {
         double val=0;
 #pragma unroll
@@ -969,15 +978,12 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d,int *
 
                 int idxO_1[3],idxO_2[3];
 
-                int decode_offset1=(1<<(maxD+1));
-                int decode_offset2=(1<<(2*(maxD+1)));
-
-                int encode_idx=NodeIdxInFunction[i];
+                int encode_idx=EncodedNodeIdxInFunction[i];
                 idxO_1[0]=encode_idx%decode_offset1;
                 idxO_1[1]=(encode_idx/decode_offset1)%decode_offset1;
                 idxO_1[2]=encode_idx/decode_offset2;
 
-                encode_idx=NodeIdxInFunction[start_D+Node_D_Idx];
+                encode_idx=EncodedNodeIdxInFunction[start_D + Node_D_Idx];
                 idxO_2[0]=encode_idx%decode_offset1;
                 idxO_2[1]=(encode_idx/decode_offset1)%decode_offset1;
                 idxO_2[2]=encode_idx/decode_offset2;
@@ -1010,7 +1016,7 @@ __global__ void computeCoverNums(OctNode *NodeArray,int idx,int *coverNums){
     }
 }
 
-__device__ int getNeighIdx(int *coverNums,int threadId){
+__device__ int getNeighIdx(int *&coverNums,int threadId){
     int neighIdx=0;
     for(neighIdx=0;neighIdx<27;++neighIdx){
         if(coverNums[neighIdx] <= threadId && coverNums[neighIdx+1] > threadId){
@@ -1043,14 +1049,14 @@ __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNum
     int maxD=maxDepth;
     int start_D=BaseAddressArray_d[maxD];
     int res=resolution;
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
+
     for(int i=offset;i<coverNums;i+=stride){
         int DIdx=DIdxArray[i];
         const Point3D<float> &vo = VectorField[DIdx];
 
         int idxO_1[3],idxO_2[3];
-
-        int decode_offset1=(1<<(maxD+1));
-        int decode_offset2=(1<<(2*(maxD+1)));
 
         int encode_idx=NodeIdxInFunction[idx];
         idxO_1[0]=encode_idx%decode_offset1;
@@ -1072,6 +1078,181 @@ __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNum
         uo.coords[1]=dot_F_DF[scratch[1]];
         uo.coords[2]=dot_F_DF[scratch[2]];
         divg[i] += DotProduct(vo,uo);
+    }
+}
+
+__device__ double GetLaplacianEntry(double *&dot_F_DF,double *&dot_F_D2F,
+                                    const int (&idx)[3])
+{
+    double dot[3];
+    dot[0]=dot_F_DF[idx[0]];
+    dot[1]=dot_F_DF[idx[1]];
+    dot[2]=dot_F_DF[idx[2]];
+    double Entry=(
+            dot_F_D2F[idx[0]]*dot[1]*dot[2]+
+            dot_F_D2F[idx[1]]*dot[0]*dot[2]+
+            dot_F_D2F[idx[2]]*dot[0]*dot[1]
+            );
+    return Entry;
+}
+
+__global__ void GenerateSingleNodeLaplacian(double *dot_F_DF,double *dot_F_D2F,
+                                            int *EncodedNodeIdxInFunction,OctNode *NodeArray,
+                                            int left,int right,
+                                            int *rowCount,int *colIdx,double *val)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int res=resolution;
+    int maxD=maxDepth;
+    offset+=left;
+    double eps=EPSILON;
+
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
+
+    for(int i=offset;i<right;i+=stride){
+        int cnt=0;
+        int rowIdx=i-left;
+        int colStart=rowIdx * 27;
+
+        int idxO_1[3];
+        int encode_idx=EncodedNodeIdxInFunction[i];
+        idxO_1[0]=encode_idx%decode_offset1;
+        idxO_1[1]=(encode_idx/decode_offset1)%decode_offset1;
+        idxO_1[2]=encode_idx/decode_offset2;
+
+        for(int j=0;j<27;++j){
+            int neigh=NodeArray[i].neighs[j];
+            if(neigh == -1) continue;
+
+            int colIndex=neigh-left + 1;
+
+            int idxO_2[3];
+            encode_idx=EncodedNodeIdxInFunction[neigh];
+            idxO_2[0]=encode_idx%decode_offset1;
+            idxO_2[1]=(encode_idx/decode_offset1)%decode_offset1;
+            idxO_2[2]=encode_idx/decode_offset2;
+
+            int scratch[3];
+            scratch[0] = idxO_1[0] * res + idxO_2[0];
+            scratch[1] = idxO_1[1] * res + idxO_2[1];
+            scratch[2] = idxO_1[2] * res + idxO_2[2];
+
+            double LaplacianEntryValue= GetLaplacianEntry(dot_F_DF,dot_F_D2F,scratch);
+            if(LaplacianEntryValue > eps) {
+                colIdx[colStart + cnt] = colIndex;
+                val[colStart + cnt] = LaplacianEntryValue;
+                ++cnt;
+            }
+        }
+        rowCount[rowIdx]=cnt;
+    }
+}
+
+struct validEntry{
+    __device__ bool operator()(const int &x){
+        return x > 0;
+    }
+};
+
+
+
+__host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h, const int& nowDepth,   //host
+                                 int *EncodedNodeIdxInFunction, OctNode *NodeArray, double *Divergence,//device
+                                 const int &NodeArray_sz,
+                                 double *dot_F_DF,double *dot_F_D2F,
+                                 double *&d_x)
+{
+    dim3 grid=32;
+    dim3 block(32,32);
+    int nByte;
+    nByte=sizeof(double) * NodeArray_sz;
+    CHECK(cudaMalloc((double**)&d_x,nByte));
+
+    // run iteration for single depth nodes
+    for(int i=0;i<=maxDepth_h;++i){
+        printf("Depth %d Itetation...\n",i);
+        int nowDepthNodesNum=NodeArrayCount_h[i];
+
+        int *rowCount = NULL;
+        nByte=sizeof(int) * (nowDepthNodesNum+2);
+        CHECK(cudaMalloc((int**)&rowCount,nByte));
+        CHECK(cudaMemset(rowCount,0,nByte));
+
+        int *colIdx = NULL;
+        nByte=sizeof(int) * nowDepthNodesNum * 27;
+        CHECK(cudaMalloc((int**)&colIdx,nByte));
+        CHECK(cudaMemset(colIdx,0,nByte));
+
+        double *val = NULL;
+        nByte=sizeof(double) * nowDepthNodesNum * 27;
+        CHECK(cudaMalloc((double**)&val,nByte));
+//        CHECK(cudaMemset(val,0,nByte));
+
+        GenerateSingleNodeLaplacian<<<grid,block>>>(dot_F_DF,dot_F_D2F,
+                                                    EncodedNodeIdxInFunction,NodeArray,
+                                                    BaseAddressArray_h[i],BaseAddressArray_h[i]+nowDepthNodesNum,
+                                                    rowCount + 1,colIdx,val);
+        cudaDeviceSynchronize();
+
+
+        thrust::device_ptr<int> rowCount_ptr=thrust::device_pointer_cast<int>(rowCount);
+//        int valNums_test=thrust::reduce(rowCount_ptr + 1,rowCount_ptr+nowDepthNodesNum + 1);
+
+        int *RowBaseAddress = NULL;
+        // first address number is meaningless
+        nByte=sizeof(int) * (nowDepthNodesNum + 2);
+        CHECK(cudaMalloc((int**)&RowBaseAddress,nByte));
+        thrust::device_ptr<int> RowBaseAddress_ptr=thrust::device_pointer_cast<int>(RowBaseAddress);
+        int temp=1;
+        CHECK(cudaMemcpy(rowCount,&temp,sizeof(int),cudaMemcpyHostToDevice));
+        thrust::exclusive_scan(rowCount_ptr,rowCount_ptr+nowDepthNodesNum+1,RowBaseAddress_ptr);
+        int valNums;
+        int lastRowNum;
+        CHECK(cudaMemcpy(&valNums,RowBaseAddress+nowDepthNodesNum,sizeof(int),cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(&lastRowNum,rowCount+nowDepthNodesNum,sizeof(int),cudaMemcpyDeviceToHost));
+        valNums+=lastRowNum;
+        CHECK(cudaMemcpy(RowBaseAddress+nowDepthNodesNum+1,&valNums,sizeof(int),cudaMemcpyHostToDevice));
+
+        --valNums;
+//        assert(valNums == valNums_test);
+
+
+        int *MergedColIdx = NULL;
+        nByte=sizeof(int) * valNums;
+        CHECK(cudaMalloc((int**)&MergedColIdx,nByte));
+        thrust::device_ptr<int> colIdx_ptr=thrust::device_pointer_cast<int>(colIdx);
+        thrust::device_ptr<int> MergedColIdx_ptr=thrust::device_pointer_cast<int>(MergedColIdx);
+
+        double *MergedVal = NULL;
+        nByte=sizeof(double) * valNums;
+        CHECK(cudaMalloc((double**)&MergedVal,nByte));
+        thrust::device_ptr<double> val_ptr=thrust::device_pointer_cast<double>(val);
+        thrust::device_ptr<double> MergedVal_ptr=thrust::device_pointer_cast<double>(MergedVal);
+
+        thrust::device_ptr<double> MergedVal_end=thrust::copy_if(val_ptr,val_ptr+nowDepthNodesNum*27,colIdx_ptr,MergedVal_ptr,validEntry());
+        thrust::device_ptr<int> MergedColIdx_end=thrust::copy_if(colIdx,colIdx+nowDepthNodesNum*27,MergedColIdx_ptr,validEntry());
+
+        assert(MergedVal_end-MergedVal_ptr == valNums);
+        assert(MergedColIdx_end-MergedColIdx_ptr == valNums);
+
+        printf("valNums:%d\n",valNums);
+
+        solveCG_DeviceToDeviceAssigned(nowDepthNodesNum,valNums,
+                                       RowBaseAddress+1,
+                                       MergedColIdx,
+                                       MergedVal,
+                                       Divergence+BaseAddressArray_h[i],
+                                       d_x+BaseAddressArray_h[i]);
+
+        cudaFree(rowCount);
+        cudaFree(colIdx);
+        cudaFree(val);
+        cudaFree(RowBaseAddress);
+        cudaFree(MergedColIdx);
+        cudaFree(MergedVal);
     }
 }
 
@@ -1133,7 +1314,6 @@ int main() {
             F=F/F(0);
     }
 
-
     int nByte=sizeof(double) * fData.res * fData.res;
     double *dot_F_DF=NULL;
     CHECK(cudaMalloc((double **)&dot_F_DF,nByte));
@@ -1175,19 +1355,19 @@ int main() {
     CHECK(cudaMalloc((double **)&Divergence,nByte));
     CHECK(cudaMemset(Divergence,0,nByte));
 
-    int *NodeIdxInFunction=NULL;
+    int *EncodedNodeIdxInFunction=NULL;
     nByte=sizeof(int) * NodeArray_sz;
-    CHECK(cudaMalloc((int **)&NodeIdxInFunction,nByte));
+    CHECK(cudaMalloc((int **)&EncodedNodeIdxInFunction, nByte));
     precomputeEncodedFunctionIdxOfNode<<<grid,block>>>(BaseAddressArray_d,
-                                                       NodeArray,NodeArray_sz,
-                                                       NodeIdxInFunction);
+                                                       NodeArray, NodeArray_sz,
+                                                       EncodedNodeIdxInFunction);
     cudaDeviceSynchronize();
     double mid2=cpuSecond();
     printf("Precompute Function index of node takes:%lfs\n",mid2-mid1);
 
     // memory access is very slow, maybe optimize it by setting faster memory.
-    computeEncodedFinerNodesDivergence<<<grid,block>>>(BaseAddressArray_d,NodeIdxInFunction,
-                                                       NodeArray,BaseAddressArray[5],BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h],
+    computeEncodedFinerNodesDivergence<<<grid,block>>>(BaseAddressArray_d, EncodedNodeIdxInFunction,
+                                                       NodeArray, BaseAddressArray[5],BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h],
                                                        VectorField,
                                                        dot_F_DF,
                                                        Divergence);
@@ -1228,10 +1408,10 @@ int main() {
             generateDIdxArray<<<grid,block>>>(NodeArray,j,coverNums,DIdxArray);
             cudaDeviceSynchronize();
 
-            computeEncodedCoarserNodesDivergence<<<grid,block>>>(DIdxArray,coverNums_h[27],BaseAddressArray_d,
-                                                                                 NodeIdxInFunction,
-                                                                                 VectorField,dot_F_DF,
-                                                                                 j,divg);
+            computeEncodedCoarserNodesDivergence<<<grid,block>>>(DIdxArray, coverNums_h[27], BaseAddressArray_d,
+                                                                 EncodedNodeIdxInFunction,
+                                                                 VectorField, dot_F_DF,
+                                                                 j, divg);
             cudaDeviceSynchronize();
             thrust::device_ptr<double> divg_ptr=thrust::device_pointer_cast<double>(divg);
             double val=thrust::reduce(divg_ptr,divg_ptr+coverNums_h[27]);
@@ -1247,29 +1427,16 @@ int main() {
     printf("Compute coarser depth nodes' divergence takes:%lfs\n",mid4-mid3);
 
 
-    //solve the x
-//    double *Solution=NULL;
-//    nByte=sizeof(double) * NodeArray_sz;
-//    CHECK(cudaMalloc((double**)&Solution,nByte));
-//    CHECK(cudaMemset(Solution,0,nByte));
-//
-//    for(int i=0;i<=maxDepth_h;++i){
-//        int dim = NodeArrayCount_h[i];
-//    }
+    // d_x is the Solution
+    double *d_x=NULL;
+    LaplacianIteration(BaseAddressArray,NodeArrayCount_h,4,
+                       EncodedNodeIdxInFunction,NodeArray,Divergence,
+                       NodeArray_sz,
+                       dot_F_DF,dot_F_D2F,
+                       d_x);
 
-    const int m = 4;
-    const int nnzA = 8;
-    int csrRowPtrA[] = {1, 4, 6, 8, 9};
-    int csrColIndA[] = {1,2,3, 1, 2, 1, 3, 4};
-    double csrValA[]= {4,1,7,1,3,7,3,9};
-    double b[] = {1,2,7,8};
+    double mid5=cpuSecond();
+    printf("GPU Laplacian Iteration takes:%lfs\n",mid5-mid4);
 
-    double *x;
-
-    solveCG_HostToDevice(m,nnzA,csrRowPtrA,csrColIndA,csrValA,b,x);
-
-    for(int i=0;i<m;++i){
-        printf("%lf ",x[i]);
-    }
 
 }

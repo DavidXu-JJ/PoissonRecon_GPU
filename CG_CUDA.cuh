@@ -105,7 +105,7 @@ int solveCG_HostToHost(const int &m,const int &nnzA,
 
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    CUDA_CHECK(cudaDeviceReset());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     return EXIT_SUCCESS;
 }
@@ -177,7 +177,76 @@ int solveCG_DeviceToDevice(const int &m,const int &nnzA,
 
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    CUDA_CHECK(cudaDeviceReset());
+    CUDA_CHECK(cudaDeviceSynchronize());
+
+    return EXIT_SUCCESS;
+}
+
+//  all array except d_x should be pre-allocated and assigned,
+//  d_x should be pre-allocated
+int solveCG_DeviceToDeviceAssigned(const int &m,const int &nnzA,
+                                   int *d_csrRowPtrA,  //m+1
+                                   int *d_csrColIndA,  //nzzA
+                                   double *d_csrValA,     //nzzA
+                                   double *d_b,           //m
+                                   double *d_x)           //m
+{
+    cusolverSpHandle_t cusolverH = NULL;
+    csrqrInfo_t info = NULL;
+    cusparseMatDescr_t descrA = NULL;
+    cudaStream_t stream = NULL;
+
+    // GPU does batch QR
+    // d_A is CSR format, d_csrValA is of size nnzA*batchSize
+    // d_x is a matrix of size batchSize * m
+    // d_b is a matrix of size batchSize * m
+
+    size_t size_qr = 0;
+    size_t size_internal = 0;
+    void *buffer_qr = nullptr; // working space for numerical factorization
+
+    CUSOLVER_CHECK(cusolverSpCreate(&cusolverH));
+
+    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+    CUSOLVER_CHECK(cusolverSpSetStream(cusolverH, stream));
+
+    CUSPARSE_CHECK(cusparseCreateMatDescr(&descrA));
+
+    CUSPARSE_CHECK(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
+    CUSPARSE_CHECK(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE)); // base-1
+
+    CUSOLVER_CHECK(cusolverSpCreateCsrqrInfo(&info));
+
+
+    CUSOLVER_CHECK(cusolverSpXcsrqrAnalysisBatched(cusolverH, m, m, nnzA, descrA, d_csrRowPtrA,
+                                                   d_csrColIndA, info));
+
+    CUSOLVER_CHECK(cusolverSpDcsrqrBufferInfoBatched(cusolverH, m, m, nnzA, descrA, d_csrValA,
+                                                     d_csrRowPtrA, d_csrColIndA, 1, info,
+                                                     &size_internal, &size_qr));
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+    std::printf("numerical factorization needs internal data %lld bytes\n",
+                static_cast<long long>(size_internal));
+    std::printf("numerical factorization needs working space %lld bytes\n",
+                static_cast<long long>(size_qr));
+
+    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&buffer_qr), size_qr));
+
+
+    CUSOLVER_CHECK(cusolverSpDcsrqrsvBatched(cusolverH, m, m, nnzA, descrA, d_csrValA, d_csrRowPtrA,
+                                             d_csrColIndA, d_b, d_x, 1, info, buffer_qr));
+
+    CUDA_CHECK(cudaStreamSynchronize(stream));
+
+
+    CUDA_CHECK(cudaFree(buffer_qr));
+
+    CUSOLVER_CHECK(cusolverSpDestroy(cusolverH));
+
+    CUDA_CHECK(cudaStreamDestroy(stream));
+
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     return EXIT_SUCCESS;
 }
@@ -254,7 +323,7 @@ int solveCG_DeviceToHost(const int &m,const int &nnzA,
 
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    CUDA_CHECK(cudaDeviceReset());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     return EXIT_SUCCESS;
 }
@@ -352,7 +421,7 @@ int solveCG_HostToDevice(const int &m,const int &nnzA,
 
     CUDA_CHECK(cudaStreamDestroy(stream));
 
-    CUDA_CHECK(cudaDeviceReset());
+    CUDA_CHECK(cudaDeviceSynchronize());
 
     return EXIT_SUCCESS;
 }
