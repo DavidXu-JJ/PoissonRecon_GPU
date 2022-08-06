@@ -23,6 +23,7 @@
 #include "ConfirmedSparseMatrix.cuh"
 #include "CG_CUDA.cuh"
 
+//! maybe cudaMemset and cudaMemcpy can be optimized into async function
 
 //#define FORCE_UNIT_NORMALS 1
 template<class Real>
@@ -956,7 +957,7 @@ __global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdx
     }
 }
 
-__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int *EncodedNodeIdxInFunction, OctNode *NodeArray, int left, int right, Point3D<float> *VectorField, const double *dot_F_DF, double *Divergence) {
+__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int *EncodedNodeIdxInFunction, OctNode *NodeArray, int left, int right, Point3D<float> *VectorField, const double *dot_F_DF, float *Divergence) {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1040,9 +1041,9 @@ __global__ void generateDIdxArray(OctNode *NodeArray,int idx,int *coverNums,int 
 
 
 __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNums,int *BaseAddressArray_d,
-                                              int *NodeIdxInFunction,
-                                              Point3D<float> *VectorField,const double *dot_F_DF,
-                                              int idx,double *divg){
+                                                     int *NodeIdxInFunction,
+                                                     Point3D<float> *VectorField,const double *dot_F_DF,
+                                                     int idx,float *divg){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1092,14 +1093,14 @@ __device__ double GetLaplacianEntry(double *&dot_F_DF,double *&dot_F_D2F,
             dot_F_D2F[idx[0]]*dot[1]*dot[2]+
             dot_F_D2F[idx[1]]*dot[0]*dot[2]+
             dot_F_D2F[idx[2]]*dot[0]*dot[1]
-            );
+    );
     return Entry;
 }
 
 __global__ void GenerateSingleNodeLaplacian(double *dot_F_DF,double *dot_F_D2F,
                                             int *EncodedNodeIdxInFunction,OctNode *NodeArray,
                                             int left,int right,
-                                            int *rowCount,int *colIdx,double *val)
+                                            int *rowCount,int *colIdx,float *val)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -1127,7 +1128,7 @@ __global__ void GenerateSingleNodeLaplacian(double *dot_F_DF,double *dot_F_D2F,
             int neigh=NodeArray[i].neighs[j];
             if(neigh == -1) continue;
 
-            int colIndex=neigh-left + 1;
+            int colIndex=neigh-left;
 
             int idxO_2[3];
             encode_idx=EncodedNodeIdxInFunction[neigh];
@@ -1153,23 +1154,23 @@ __global__ void GenerateSingleNodeLaplacian(double *dot_F_DF,double *dot_F_D2F,
 
 struct validEntry{
     __device__ bool operator()(const int &x){
-        return x > 0;
+        return x >= 0;
     }
 };
 
 
 
 __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h, const int& nowDepth,   //host
-                                 int *EncodedNodeIdxInFunction, OctNode *NodeArray, double *Divergence,//device
+                                 int *EncodedNodeIdxInFunction, OctNode *NodeArray, float *Divergence,//device
                                  const int &NodeArray_sz,
                                  double *dot_F_DF,double *dot_F_D2F,
-                                 double *&d_x)
+                                 float *&d_x)
 {
     dim3 grid=32;
     dim3 block(32,32);
     int nByte;
-    nByte=sizeof(double) * NodeArray_sz;
-    CHECK(cudaMalloc((double**)&d_x,nByte));
+    nByte=sizeof(float) * NodeArray_sz;
+    CHECK(cudaMallocManaged((float**)&d_x,nByte));
 
     // run iteration for single depth nodes
     for(int i=0;i<=maxDepth_h;++i){
@@ -1178,17 +1179,17 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
 
         int *rowCount = NULL;
         nByte=sizeof(int) * (nowDepthNodesNum+2);
-        CHECK(cudaMalloc((int**)&rowCount,nByte));
+        CHECK(cudaMallocManaged((int**)&rowCount,nByte));
         CHECK(cudaMemset(rowCount,0,nByte));
 
         int *colIdx = NULL;
         nByte=sizeof(int) * nowDepthNodesNum * 27;
-        CHECK(cudaMalloc((int**)&colIdx,nByte));
-        CHECK(cudaMemset(colIdx,0,nByte));
+        CHECK(cudaMallocManaged((int**)&colIdx,nByte));
+        CHECK(cudaMemset(colIdx,-1,nByte));
 
-        double *val = NULL;
-        nByte=sizeof(double) * nowDepthNodesNum * 27;
-        CHECK(cudaMalloc((double**)&val,nByte));
+        float *val = NULL;
+        nByte=sizeof(float) * nowDepthNodesNum * 27;
+        CHECK(cudaMallocManaged((float**)&val,nByte));
 //        CHECK(cudaMemset(val,0,nByte));
 
         GenerateSingleNodeLaplacian<<<grid,block>>>(dot_F_DF,dot_F_D2F,
@@ -1204,10 +1205,10 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
         int *RowBaseAddress = NULL;
         // first address number is meaningless
         nByte=sizeof(int) * (nowDepthNodesNum + 2);
-        CHECK(cudaMalloc((int**)&RowBaseAddress,nByte));
+        CHECK(cudaMallocManaged((int**)&RowBaseAddress,nByte));
         thrust::device_ptr<int> RowBaseAddress_ptr=thrust::device_pointer_cast<int>(RowBaseAddress);
-        int temp=1;
-        CHECK(cudaMemcpy(rowCount,&temp,sizeof(int),cudaMemcpyHostToDevice));
+//        int temp=1;
+//        CHECK(cudaMemcpy(rowCount,&temp,sizeof(int),cudaMemcpyHostToDevice));
         thrust::exclusive_scan(rowCount_ptr,rowCount_ptr+nowDepthNodesNum+1,RowBaseAddress_ptr);
         int valNums;
         int lastRowNum;
@@ -1216,23 +1217,23 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
         valNums+=lastRowNum;
         CHECK(cudaMemcpy(RowBaseAddress+nowDepthNodesNum+1,&valNums,sizeof(int),cudaMemcpyHostToDevice));
 
-        --valNums;
+//        --valNums;
 //        assert(valNums == valNums_test);
 
 
         int *MergedColIdx = NULL;
         nByte=sizeof(int) * valNums;
-        CHECK(cudaMalloc((int**)&MergedColIdx,nByte));
+        CHECK(cudaMallocManaged((int**)&MergedColIdx,nByte));
         thrust::device_ptr<int> colIdx_ptr=thrust::device_pointer_cast<int>(colIdx);
         thrust::device_ptr<int> MergedColIdx_ptr=thrust::device_pointer_cast<int>(MergedColIdx);
 
-        double *MergedVal = NULL;
-        nByte=sizeof(double) * valNums;
-        CHECK(cudaMalloc((double**)&MergedVal,nByte));
-        thrust::device_ptr<double> val_ptr=thrust::device_pointer_cast<double>(val);
-        thrust::device_ptr<double> MergedVal_ptr=thrust::device_pointer_cast<double>(MergedVal);
+        float *MergedVal = NULL;
+        nByte=sizeof(float) * valNums;
+        CHECK(cudaMallocManaged((float**)&MergedVal,nByte));
+        thrust::device_ptr<float> val_ptr=thrust::device_pointer_cast<float>(val);
+        thrust::device_ptr<float> MergedVal_ptr=thrust::device_pointer_cast<float>(MergedVal);
 
-        thrust::device_ptr<double> MergedVal_end=thrust::copy_if(val_ptr,val_ptr+nowDepthNodesNum*27,colIdx_ptr,MergedVal_ptr,validEntry());
+        thrust::device_ptr<float> MergedVal_end=thrust::copy_if(val_ptr,val_ptr+nowDepthNodesNum*27,colIdx_ptr,MergedVal_ptr,validEntry());
         thrust::device_ptr<int> MergedColIdx_end=thrust::copy_if(colIdx,colIdx+nowDepthNodesNum*27,MergedColIdx_ptr,validEntry());
 
         assert(MergedVal_end-MergedVal_ptr == valNums);
@@ -1240,12 +1241,19 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
 
         printf("valNums:%d\n",valNums);
 
-        solveCG_DeviceToDeviceAssigned(nowDepthNodesNum,valNums,
-                                       RowBaseAddress+1,
-                                       MergedColIdx,
-                                       MergedVal,
-                                       Divergence+BaseAddressArray_h[i],
-                                       d_x+BaseAddressArray_h[i]);
+//        for(int j=0;j<nowDepthNodesNum;++j){
+//            printf("%f\n",Divergence[BaseAddressArray_h[i]+j]);
+//        }
+        solverCG_DeviceToDevice(nowDepthNodesNum,valNums,
+                                RowBaseAddress+1,
+                                MergedColIdx,
+                                MergedVal,
+                                Divergence+BaseAddressArray_h[i],
+                                d_x+BaseAddressArray_h[i]);
+
+//        for(int j=0;j<nowDepthNodesNum;++j){
+//            printf("%f\n",d_x[BaseAddressArray_h[i]+j]);
+//        }
 
         cudaFree(rowCount);
         cudaFree(colIdx);
@@ -1350,9 +1358,9 @@ int main() {
     double mid1=cpuSecond();
     printf("Compute Vector Field takes:%lfs\n",mid1-st);
 
-    double *Divergence=NULL;
-    nByte=sizeof(double) * NodeArray_sz;
-    CHECK(cudaMalloc((double **)&Divergence,nByte));
+    float *Divergence=NULL;
+    nByte=sizeof(float) * NodeArray_sz;
+    CHECK(cudaMallocManaged((float **)&Divergence,nByte));
     CHECK(cudaMemset(Divergence,0,nByte));
 
     int *EncodedNodeIdxInFunction=NULL;
@@ -1384,7 +1392,7 @@ int main() {
 
 
     // maybe can be optimized by running all nodes at the same time.
-    nByte=sizeof(double) * NodeDNum;
+//    nByte=sizeof(float) * NodeDNum;
     for(int i=4;i>=0;--i){
         for(int j=BaseAddressArray[i];j<BaseAddressArray[i+1];++j){
             int *coverNums=NULL;
@@ -1395,9 +1403,9 @@ int main() {
             CHECK(cudaMemcpy(coverNums_h,coverNums,sizeof(int) * 28,cudaMemcpyDeviceToHost));
 //            printf("%d,%d\n",j,coverNums_h);
 
-            double *divg=NULL;
-            nByte=sizeof(double)*coverNums_h[27];
-            CHECK(cudaMalloc((double**)&divg,nByte));
+            float *divg=NULL;
+            nByte=sizeof(float)*coverNums_h[27];
+            CHECK(cudaMalloc((float**)&divg,nByte));
             CHECK(cudaMemset(divg,0,nByte));
 
             int *DIdxArray=NULL;
@@ -1413,10 +1421,10 @@ int main() {
                                                                  VectorField, dot_F_DF,
                                                                  j, divg);
             cudaDeviceSynchronize();
-            thrust::device_ptr<double> divg_ptr=thrust::device_pointer_cast<double>(divg);
-            double val=thrust::reduce(divg_ptr,divg_ptr+coverNums_h[27]);
+            thrust::device_ptr<float> divg_ptr=thrust::device_pointer_cast<float>(divg);
+            float val=thrust::reduce(divg_ptr,divg_ptr+coverNums_h[27]);
 
-            CHECK(cudaMemcpy(Divergence+j,&val,sizeof(double),cudaMemcpyHostToDevice));
+            CHECK(cudaMemcpy(Divergence+j,&val,sizeof(float),cudaMemcpyHostToDevice));
 
             cudaFree(DIdxArray);
             cudaFree(divg);
@@ -1428,7 +1436,7 @@ int main() {
 
 
     // d_x is the Solution
-    double *d_x=NULL;
+    float *d_x=NULL;
     LaplacianIteration(BaseAddressArray,NodeArrayCount_h,4,
                        EncodedNodeIdxInFunction,NodeArray,Divergence,
                        NodeArray_sz,

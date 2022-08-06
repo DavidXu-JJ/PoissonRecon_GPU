@@ -1,427 +1,508 @@
+/* Copyright (c) 2022, NVIDIA CORPORATION. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *  * Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ *  * Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *  * Neither the name of NVIDIA CORPORATION nor the names of its
+ *    contributors may be used to endorse or promote products derived
+ *    from this software without specific prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS ``AS IS'' AND ANY
+ * EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+ * CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+ * EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+ * PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+ * PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+ * OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+ * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
 
-//  referenced from https://github.com/NVIDIA/CUDALibrarySamples/blob/master/cuSOLVER/csrqr/cusolver_csrqr_example1.cu
-#include <cstdio>
-#include <cstdlib>
-#include <vector>
+/*
+ * This sample implements a conjugate gradient solver on GPU using
+ * Multi Block Cooperative Groups, also uses Unified Memory.
+ *
+ */
+
+// includes, system
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 
 #include <cuda_runtime.h>
-#include <cusolverSp.h>
-#include <cusparse.h>
 
-#include "cusolver_utils.h"
+// Utilities and system includes
+#include "helper_cuda.h"  // helper function CUDA error checking and initialization
+#include "helper_functions.h"  // helper for shared functions common to CUDA Samples
 
-//  all array should be pre-allocated(including x), the rest array should also be assigned
-int solveCG_HostToHost(const int &m,const int &nnzA,
-                          int *csrRowPtrA,  //m+1
-                          int *csrColIndA,  //nzzA
-                          double *csrValA,     //nzzA
-                          double *b,           //m
-                          double *x)           //m
-{
-    cusolverSpHandle_t cusolverH = NULL;
-    csrqrInfo_t info = NULL;
-    cusparseMatDescr_t descrA = NULL;
-    cudaStream_t stream = NULL;
+#include <cooperative_groups.h>
+#include <cooperative_groups/reduce.h>
 
-    // GPU does batch QR
-    // d_A is CSR format, d_csrValA is of size nnzA*batchSize
-    // d_x is a matrix of size batchSize * m
-    // d_b is a matrix of size batchSize * m
-    int *d_csrRowPtrA = nullptr;
-    int *d_csrColIndA = nullptr;
-    double *d_csrValA = nullptr;
-    double *d_b = nullptr; // batchSize * m
-    double *d_x = nullptr; // batchSize * m
+namespace cg = cooperative_groups;
 
-    size_t size_qr = 0;
-    size_t size_internal = 0;
-    void *buffer_qr = nullptr; // working space for numerical factorization
+const char *sSDKname = "conjugateGradientMultiBlockCG";
 
-    CUSOLVER_CHECK(cusolverSpCreate(&cusolverH));
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ < 600
+static __inline__ __device__ double atomicAdd(double *address, double val) {
+    unsigned long long int* address_as_ull = (unsigned long long int*)address;
+    unsigned long long int old = *address_as_ull, assumed;
+    if (val==0.0)
+        return __longlong_as_double(old);
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_ull, assumed, __double_as_longlong(val +__longlong_as_double(assumed)));
+    } while (assumed != old);
+    return __longlong_as_double(old);
+}
+#endif
 
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    CUSOLVER_CHECK(cusolverSpSetStream(cusolverH, stream));
+#define ENABLE_CPU_DEBUG_CODE 0
+#define THREADS_PER_BLOCK 512
 
-    CUSPARSE_CHECK(cusparseCreateMatDescr(&descrA));
+/* genTridiag: generate a random tridiagonal symmetric matrix */
+void genTridiag(int *I, int *J, float *val, int N, int nz) {
+    I[0] = 0, J[0] = 0, J[1] = 1;
+    val[0] = static_cast<float>(rand()) / RAND_MAX + 10.0f;
+    val[1] = static_cast<float>(rand()) / RAND_MAX;
+    int start;
 
-    CUSPARSE_CHECK(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CUSPARSE_CHECK(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE)); // base-1
+    for (int i = 1; i < N; i++) {
+        if (i > 1) {
+            I[i] = I[i - 1] + 3;
+        } else {
+            I[1] = 2;
+        }
 
-    CUSOLVER_CHECK(cusolverSpCreateCsrqrInfo(&info));
+        start = (i - 1) * 3 + 2;
+        J[start] = i - 1;
+        J[start + 1] = i;
 
+        if (i < N - 1) {
+            J[start + 2] = i + 1;
+        }
 
-    CUDA_CHECK(
-            cudaMalloc(reinterpret_cast<void **>(&d_csrValA), sizeof(double) * nnzA));
-    CUDA_CHECK(
-            cudaMalloc(reinterpret_cast<void **>(&d_csrColIndA), sizeof(int) * nnzA));
-    CUDA_CHECK(
-            cudaMalloc(reinterpret_cast<void **>(&d_csrRowPtrA), sizeof(int) * (m+1)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(double) * m));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double) * m));
+        val[start] = val[start - 1];
+        val[start + 1] = static_cast<float>(rand()) / RAND_MAX + 10.0f;
 
-    CUDA_CHECK(cudaMemcpyAsync(d_csrValA, csrValA, sizeof(double) * nnzA,
-                               cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_csrColIndA, csrColIndA, sizeof(int) * nnzA,
-                               cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_csrRowPtrA, csrRowPtrA, sizeof(int) * (m+1),
-                               cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_b, b, sizeof(double) * m,
-                               cudaMemcpyHostToDevice, stream));
+        if (i < N - 1) {
+            val[start + 2] = static_cast<float>(rand()) / RAND_MAX;
+        }
+    }
 
-
-    CUSOLVER_CHECK(cusolverSpXcsrqrAnalysisBatched(cusolverH, m, m, nnzA, descrA, d_csrRowPtrA,
-                                                   d_csrColIndA, info));
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrBufferInfoBatched(cusolverH, m, m, nnzA, descrA, d_csrValA,
-                                                     d_csrRowPtrA, d_csrColIndA, 1, info,
-                                                     &size_internal, &size_qr));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    std::printf("numerical factorization needs internal data %lld bytes\n",
-                static_cast<long long>(size_internal));
-    std::printf("numerical factorization needs working space %lld bytes\n",
-                static_cast<long long>(size_qr));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&buffer_qr), size_qr));
-
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrsvBatched(cusolverH, m, m, nnzA, descrA, d_csrValA, d_csrRowPtrA,
-                                             d_csrColIndA, d_b, d_x, 1, info, buffer_qr));
-
-    CUDA_CHECK(cudaMemcpyAsync(x, d_x, sizeof(double) * m,
-                               cudaMemcpyDeviceToHost, stream));
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-
-    CUDA_CHECK(cudaFree(d_csrRowPtrA));
-    CUDA_CHECK(cudaFree(d_csrColIndA));
-    CUDA_CHECK(cudaFree(d_csrValA));
-    CUDA_CHECK(cudaFree(d_b));
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(buffer_qr));
-
-    CUSOLVER_CHECK(cusolverSpDestroy(cusolverH));
-
-    CUDA_CHECK(cudaStreamDestroy(stream));
-
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    return EXIT_SUCCESS;
+    I[N] = nz;
 }
 
-//  all array except d_x should be pre-allocated and assigned,
-//  d_x should be NULL
-int solveCG_DeviceToDevice(const int &m,const int &nnzA,
-                         int *d_csrRowPtrA,  //m+1
-                         int *d_csrColIndA,  //nzzA
-                         double *d_csrValA,     //nzzA
-                         double *d_b,           //m
-                         double *&d_x)           //m
-{
-    cusolverSpHandle_t cusolverH = NULL;
-    csrqrInfo_t info = NULL;
-    cusparseMatDescr_t descrA = NULL;
-    cudaStream_t stream = NULL;
+// I - contains location of the given non-zero element in the row of the matrix
+// J - contains location of the given non-zero element in the column of the
+// matrix val - contains values of the given non-zero elements of the matrix
+// inputVecX - input vector to be multiplied
+// outputVecY - resultant vector
+void cpuSpMV(int *I, int *J, float *val, int nnz, int num_rows, float alpha,
+             float *inputVecX, float *outputVecY) {
+    for (int i = 0; i < num_rows; i++) {
+        int num_elems_this_row = I[i + 1] - I[i];
 
-    // GPU does batch QR
-    // d_A is CSR format, d_csrValA is of size nnzA*batchSize
-    // d_x is a matrix of size batchSize * m
-    // d_b is a matrix of size batchSize * m
-    d_x = nullptr; // batchSize * m
+        float output = 0.0;
+        for (int j = 0; j < num_elems_this_row; j++) {
+            output += alpha * val[I[i] + j] * inputVecX[J[I[i] + j]];
+        }
+        outputVecY[i] = output;
+    }
 
-    size_t size_qr = 0;
-    size_t size_internal = 0;
-    void *buffer_qr = nullptr; // working space for numerical factorization
-
-    CUSOLVER_CHECK(cusolverSpCreate(&cusolverH));
-
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    CUSOLVER_CHECK(cusolverSpSetStream(cusolverH, stream));
-
-    CUSPARSE_CHECK(cusparseCreateMatDescr(&descrA));
-
-    CUSPARSE_CHECK(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CUSPARSE_CHECK(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE)); // base-1
-
-    CUSOLVER_CHECK(cusolverSpCreateCsrqrInfo(&info));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double) * m));
-
-
-    CUSOLVER_CHECK(cusolverSpXcsrqrAnalysisBatched(cusolverH, m, m, nnzA, descrA, d_csrRowPtrA,
-                                                   d_csrColIndA, info));
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrBufferInfoBatched(cusolverH, m, m, nnzA, descrA, d_csrValA,
-                                                     d_csrRowPtrA, d_csrColIndA, 1, info,
-                                                     &size_internal, &size_qr));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    std::printf("numerical factorization needs internal data %lld bytes\n",
-                static_cast<long long>(size_internal));
-    std::printf("numerical factorization needs working space %lld bytes\n",
-                static_cast<long long>(size_qr));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&buffer_qr), size_qr));
-
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrsvBatched(cusolverH, m, m, nnzA, descrA, d_csrValA, d_csrRowPtrA,
-                                             d_csrColIndA, d_b, d_x, 1, info, buffer_qr));
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-
-    CUDA_CHECK(cudaFree(buffer_qr));
-
-    CUSOLVER_CHECK(cusolverSpDestroy(cusolverH));
-
-    CUDA_CHECK(cudaStreamDestroy(stream));
-
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    return EXIT_SUCCESS;
+    return;
 }
 
-//  all array except d_x should be pre-allocated and assigned,
-//  d_x should be pre-allocated
-int solveCG_DeviceToDeviceAssigned(const int &m,const int &nnzA,
-                                   int *d_csrRowPtrA,  //m+1
-                                   int *d_csrColIndA,  //nzzA
-                                   double *d_csrValA,     //nzzA
-                                   double *d_b,           //m
-                                   double *d_x)           //m
-{
-    cusolverSpHandle_t cusolverH = NULL;
-    csrqrInfo_t info = NULL;
-    cusparseMatDescr_t descrA = NULL;
-    cudaStream_t stream = NULL;
+double dotProduct(float *vecA, float *vecB, int size) {
+    double result = 0.0;
 
-    // GPU does batch QR
-    // d_A is CSR format, d_csrValA is of size nnzA*batchSize
-    // d_x is a matrix of size batchSize * m
-    // d_b is a matrix of size batchSize * m
+    for (int i = 0; i < size; i++) {
+        result = result + (vecA[i] * vecB[i]);
+    }
 
-    size_t size_qr = 0;
-    size_t size_internal = 0;
-    void *buffer_qr = nullptr; // working space for numerical factorization
-
-    CUSOLVER_CHECK(cusolverSpCreate(&cusolverH));
-
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    CUSOLVER_CHECK(cusolverSpSetStream(cusolverH, stream));
-
-    CUSPARSE_CHECK(cusparseCreateMatDescr(&descrA));
-
-    CUSPARSE_CHECK(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CUSPARSE_CHECK(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE)); // base-1
-
-    CUSOLVER_CHECK(cusolverSpCreateCsrqrInfo(&info));
-
-
-    CUSOLVER_CHECK(cusolverSpXcsrqrAnalysisBatched(cusolverH, m, m, nnzA, descrA, d_csrRowPtrA,
-                                                   d_csrColIndA, info));
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrBufferInfoBatched(cusolverH, m, m, nnzA, descrA, d_csrValA,
-                                                     d_csrRowPtrA, d_csrColIndA, 1, info,
-                                                     &size_internal, &size_qr));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    std::printf("numerical factorization needs internal data %lld bytes\n",
-                static_cast<long long>(size_internal));
-    std::printf("numerical factorization needs working space %lld bytes\n",
-                static_cast<long long>(size_qr));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&buffer_qr), size_qr));
-
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrsvBatched(cusolverH, m, m, nnzA, descrA, d_csrValA, d_csrRowPtrA,
-                                             d_csrColIndA, d_b, d_x, 1, info, buffer_qr));
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-
-    CUDA_CHECK(cudaFree(buffer_qr));
-
-    CUSOLVER_CHECK(cusolverSpDestroy(cusolverH));
-
-    CUDA_CHECK(cudaStreamDestroy(stream));
-
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    return EXIT_SUCCESS;
+    return result;
 }
 
-//  all array except x should be pre-allocated and assigned,
-//  x should be pre-allocated
-int solveCG_DeviceToHost(const int &m,const int &nnzA,
-                       int *d_csrRowPtrA,  //m+1
-                       int *d_csrColIndA,  //nzzA
-                       double *d_csrValA,     //nzzA
-                       double *d_b,           //m
-                       double *x)           //m
-{
-    cusolverSpHandle_t cusolverH = NULL;
-    csrqrInfo_t info = NULL;
-    cusparseMatDescr_t descrA = NULL;
-    cudaStream_t stream = NULL;
-
-    // GPU does batch QR
-    // d_A is CSR format, d_csrValA is of size nnzA*batchSize
-    // d_x is a matrix of size batchSize * m
-    // d_b is a matrix of size batchSize * m
-    double *d_x = nullptr; // batchSize * m
-
-    size_t size_qr = 0;
-    size_t size_internal = 0;
-    void *buffer_qr = nullptr; // working space for numerical factorization
-
-    CUSOLVER_CHECK(cusolverSpCreate(&cusolverH));
-
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    CUSOLVER_CHECK(cusolverSpSetStream(cusolverH, stream));
-
-    CUSPARSE_CHECK(cusparseCreateMatDescr(&descrA));
-
-    CUSPARSE_CHECK(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CUSPARSE_CHECK(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE)); // base-1
-
-    CUSOLVER_CHECK(cusolverSpCreateCsrqrInfo(&info));
-
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double) * m));
-
-
-    CUSOLVER_CHECK(cusolverSpXcsrqrAnalysisBatched(cusolverH, m, m, nnzA, descrA, d_csrRowPtrA,
-                                                   d_csrColIndA, info));
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrBufferInfoBatched(cusolverH, m, m, nnzA, descrA, d_csrValA,
-                                                     d_csrRowPtrA, d_csrColIndA, 1, info,
-                                                     &size_internal, &size_qr));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-    std::printf("numerical factorization needs internal data %lld bytes\n",
-                static_cast<long long>(size_internal));
-    std::printf("numerical factorization needs working space %lld bytes\n",
-                static_cast<long long>(size_qr));
-
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&buffer_qr), size_qr));
-
-
-    CUSOLVER_CHECK(cusolverSpDcsrqrsvBatched(cusolverH, m, m, nnzA, descrA, d_csrValA, d_csrRowPtrA,
-                                             d_csrColIndA, d_b, d_x, 1, info, buffer_qr));
-
-    CUDA_CHECK(cudaMemcpyAsync(x, d_x, sizeof(double) * m,
-                               cudaMemcpyDeviceToHost, stream));
-
-    CUDA_CHECK(cudaStreamSynchronize(stream));
-
-
-    CUDA_CHECK(cudaFree(d_x));
-    CUDA_CHECK(cudaFree(buffer_qr));
-
-    CUSOLVER_CHECK(cusolverSpDestroy(cusolverH));
-
-    CUDA_CHECK(cudaStreamDestroy(stream));
-
-    CUDA_CHECK(cudaDeviceSynchronize());
-
-    return EXIT_SUCCESS;
+void scaleVector(float *vec, float alpha, int size) {
+    for (int i = 0; i < size; i++) {
+        vec[i] = alpha * vec[i];
+    }
 }
 
-//  all array except d_x should be pre-allocated and assigned,
-//  d_x should be NULL
-int solveCG_HostToDevice(const int &m,const int &nnzA,
-                       int *csrRowPtrA,  //m+1
-                       int *csrColIndA,  //nzzA
-                       double *csrValA,     //nzzA
-                       double *b,           //m
-                       double *&d_x)           //m
-{
-    cusolverSpHandle_t cusolverH = NULL;
-    csrqrInfo_t info = NULL;
-    cusparseMatDescr_t descrA = NULL;
-    cudaStream_t stream = NULL;
+void saxpy(float *x, float *y, float a, int size) {
+    for (int i = 0; i < size; i++) {
+        y[i] = a * x[i] + y[i];
+    }
+}
 
-    // GPU does batch QR
-    // d_A is CSR format, d_csrValA is of size nnzA*batchSize
-    // d_x is a matrix of size batchSize * m
-    // d_b is a matrix of size batchSize * m
-    int *d_csrRowPtrA = nullptr;
-    int *d_csrColIndA = nullptr;
-    double *d_csrValA = nullptr;
-    double *d_b = nullptr; // batchSize * m
-    d_x = nullptr; // batchSize * m
+void cpuConjugateGrad(int *I, int *J, float *val, float *x, float *Ax, float *p,
+                      float *r, int nnz, int N, float tol) {
+    int max_iter = 10000;
 
-    size_t size_qr = 0;
-    size_t size_internal = 0;
-    void *buffer_qr = nullptr; // working space for numerical factorization
+    float alpha = 1.0;
+    float alpham1 = -1.0;
+    float r0 = 0.0, b, a, na;
 
-    CUSOLVER_CHECK(cusolverSpCreate(&cusolverH));
+    cpuSpMV(I, J, val, nnz, N, alpha, x, Ax);
+    saxpy(Ax, r, alpham1, N);
 
-    CUDA_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
-    CUSOLVER_CHECK(cusolverSpSetStream(cusolverH, stream));
+    float r1 = dotProduct(r, r, N);
 
-    CUSPARSE_CHECK(cusparseCreateMatDescr(&descrA));
+    int k = 1;
 
-    CUSPARSE_CHECK(cusparseSetMatType(descrA, CUSPARSE_MATRIX_TYPE_GENERAL));
-    CUSPARSE_CHECK(cusparseSetMatIndexBase(descrA, CUSPARSE_INDEX_BASE_ONE)); // base-1
+    while (r1 > tol * tol && k <= max_iter) {
+        if (k > 1) {
+            b = r1 / r0;
+            scaleVector(p, b, N);
 
-    CUSOLVER_CHECK(cusolverSpCreateCsrqrInfo(&info));
+            saxpy(r, p, alpha, N);
+        } else {
+            for (int i = 0; i < N; i++) p[i] = r[i];
+        }
+
+        cpuSpMV(I, J, val, nnz, N, alpha, p, Ax);
+
+        float dot = dotProduct(p, Ax, N);
+        a = r1 / dot;
+
+        saxpy(p, x, a, N);
+        na = -a;
+        saxpy(Ax, r, na, N);
+
+        r0 = r1;
+        r1 = dotProduct(r, r, N);
+
+        printf("\nCPU code iteration = %3d, residual = %e\n", k, sqrt(r1));
+        k++;
+    }
+}
+
+__device__ void gpuSpMV(int *I, int *J, float *val, int nnz, int num_rows,
+                        float alpha, float *inputVecX, float *outputVecY,
+                        cg::thread_block &cta, const cg::grid_group &grid) {
+    for (int i = grid.thread_rank(); i < num_rows; i += grid.size()) {
+        int row_elem = I[i];
+        int next_row_elem = I[i + 1];
+        int num_elems_this_row = next_row_elem - row_elem;
+
+        float output = 0.0;
+        for (int j = 0; j < num_elems_this_row; j++) {
+            // I or J or val arrays - can be put in shared memory
+            // as the access is random and reused in next calls of gpuSpMV function.
+            output += alpha * val[row_elem + j] * inputVecX[J[row_elem + j]];
+        }
+
+        outputVecY[i] = output;
+    }
+}
+
+__device__ void gpuSaxpy(float *x, float *y, float a, int size,
+                         const cg::grid_group &grid) {
+    for (int i = grid.thread_rank(); i < size; i += grid.size()) {
+        y[i] = a * x[i] + y[i];
+    }
+}
+
+__device__ void gpuDotProduct(float *vecA, float *vecB, double *result,
+                              int size, const cg::thread_block &cta,
+                              const cg::grid_group &grid) {
+    extern __shared__ double tmp[];
+
+    double temp_sum = 0.0;
+    for (int i = grid.thread_rank(); i < size; i += grid.size()) {
+        temp_sum += static_cast<double>(vecA[i] * vecB[i]);
+    }
+
+    cg::thread_block_tile<32> tile32 = cg::tiled_partition<32>(cta);
+
+    temp_sum = cg::reduce(tile32, temp_sum, cg::plus<double>());
+
+    if (tile32.thread_rank() == 0) {
+        tmp[tile32.meta_group_rank()] = temp_sum;
+    }
+
+    cg::sync(cta);
+
+    if (tile32.meta_group_rank() == 0) {
+        temp_sum = tile32.thread_rank() < tile32.meta_group_size() ? tmp[tile32.thread_rank()] : 0.0;
+        temp_sum = cg::reduce(tile32, temp_sum, cg::plus<double>());
+
+        if (tile32.thread_rank() == 0) {
+            atomicAdd(result, temp_sum);
+        }
+    }
+}
+
+__device__ void gpuCopyVector(float *srcA, float *destB, int size,
+                              const cg::grid_group &grid) {
+    for (int i = grid.thread_rank(); i < size; i += grid.size()) {
+        destB[i] = srcA[i];
+    }
+}
+
+__device__ void gpuScaleVectorAndSaxpy(const float *x, float *y, float a, float scale, int size,
+                                       const cg::grid_group &grid) {
+    for (int i = grid.thread_rank(); i < size; i += grid.size()) {
+        y[i] = a * x[i] + scale * y[i];
+    }
+}
+
+extern "C" __global__ void gpuConjugateGradient(int *I, int *J, float *val,
+                                                float *x, float *Ax, float *p,
+                                                float *r, double *dot_result,
+                                                int nnz, int N, float tol) {
+    cg::thread_block cta = cg::this_thread_block();
+    cg::grid_group grid = cg::this_grid();
+
+    int max_iter = 10000;
+
+    float alpha = 1.0;
+    float alpham1 = -1.0;
+    float r0 = 0.0, r1, b, a, na;
+
+    gpuSpMV(I, J, val, nnz, N, alpha, x, Ax, cta, grid);
+
+    cg::sync(grid);
+
+    gpuSaxpy(Ax, r, alpham1, N, grid);
+
+    cg::sync(grid);
+
+    gpuDotProduct(r, r, dot_result, N, cta, grid);
+
+    cg::sync(grid);
+
+    r1 = *dot_result;
+
+    int k = 1;
+    while (r1 > tol * tol && k <= max_iter) {
+        if (k > 1) {
+            b = r1 / r0;
+            gpuScaleVectorAndSaxpy(r, p, alpha, b, N, grid);
+        } else {
+            gpuCopyVector(r, p, N, grid);
+        }
+
+        cg::sync(grid);
+
+        gpuSpMV(I, J, val, nnz, N, alpha, p, Ax, cta, grid);
+
+        if (threadIdx.x == 0 && blockIdx.x == 0) *dot_result = 0.0;
+
+        cg::sync(grid);
+
+        gpuDotProduct(p, Ax, dot_result, N, cta, grid);
+
+        cg::sync(grid);
+
+        a = r1 / *dot_result;
+
+        gpuSaxpy(p, x, a, N, grid);
+        na = -a;
+        gpuSaxpy(Ax, r, na, N, grid);
+
+        r0 = r1;
+
+        cg::sync(grid);
+        if (threadIdx.x == 0 && blockIdx.x == 0) *dot_result = 0.0;
+
+        cg::sync(grid);
+
+        gpuDotProduct(r, r, dot_result, N, cta, grid);
+
+        cg::sync(grid);
+
+        r1 = *dot_result;
+        k++;
+    }
+}
+
+bool areAlmostEqual(float a, float b, float maxRelDiff) {
+    float diff = fabsf(a - b);
+    float abs_a = fabsf(a);
+    float abs_b = fabsf(b);
+    float largest = abs_a > abs_b ? abs_a : abs_b;
+
+    if (diff <= largest * maxRelDiff) {
+        return true;
+    } else {
+        printf("maxRelDiff = %.8e\n", maxRelDiff);
+        printf(
+                "diff %.8e > largest * maxRelDiff %.8e therefore %.8e and %.8e are not "
+                "same\n",
+                diff, largest * maxRelDiff, a, b);
+        return false;
+    }
+}
+
+int solverCG_DeviceToDevice(const int& N,const int& nz,
+                            int *I, int *J, float *val, float *rhs,
+                            float *x) {
+    const float tol = 1e-5f;
+    float r1;
+    float *r, *p, *Ax;
+    cudaEvent_t start, stop;
+
+    printf("Starting [%s]...\n", sSDKname);
+
+    // This will pick the best possible CUDA capable device
+    cudaDeviceProp deviceProp;
+    int devID = 0;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, devID));
+
+    if (!deviceProp.managedMemory) {
+        // This sample requires being run on a device that supports Unified Memory
+        fprintf(stderr, "Unified Memory not supported on this device\n");
+        exit(EXIT_WAIVED);
+    }
+
+    // This sample requires being run on a device that supports Cooperative Kernel
+    // Launch
+    if (!deviceProp.cooperativeLaunch) {
+        printf(
+                "\nSelected GPU (%d) does not support Cooperative Kernel Launch, "
+                "Waiving the run\n",
+                devID);
+        exit(EXIT_WAIVED);
+    }
+
+    // Statistics about the GPU device
+    printf(
+            "> GPU device has %d Multi-Processors, SM %d.%d compute capabilities\n\n",
+            deviceProp.multiProcessorCount, deviceProp.major, deviceProp.minor);
 
 
-    CUDA_CHECK(
-            cudaMalloc(reinterpret_cast<void **>(&d_csrValA), sizeof(double) * nnzA));
-    CUDA_CHECK(
-            cudaMalloc(reinterpret_cast<void **>(&d_csrColIndA), sizeof(int) * nnzA));
-    CUDA_CHECK(
-            cudaMalloc(reinterpret_cast<void **>(&d_csrRowPtrA), sizeof(int) * (m+1)));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_b), sizeof(double) * m));
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&d_x), sizeof(double) * m));
+//    cudaMallocManaged(reinterpret_cast<void **>(&I), sizeof(int) * (N + 1));
+//    cudaMallocManaged(reinterpret_cast<void **>(&J), sizeof(int) * nz);
+//    cudaMallocManaged(reinterpret_cast<void **>(&val), sizeof(float) * nz);
 
-    CUDA_CHECK(cudaMemcpyAsync(d_csrValA, csrValA, sizeof(double) * nnzA,
-                               cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_csrColIndA, csrColIndA, sizeof(int) * nnzA,
-                               cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_csrRowPtrA, csrRowPtrA, sizeof(int) * (m+1),
-                               cudaMemcpyHostToDevice, stream));
-    CUDA_CHECK(cudaMemcpyAsync(d_b, b, sizeof(double) * m,
-                               cudaMemcpyHostToDevice, stream));
+//    genTridiag(I, J, val, N, nz);
 
+//    for (int i = 0; i <= N; ++i) {
+//        printf("%d ", I[i]);
+//    }
+//    puts("");
+//    for (int i = 0; i < nz; ++i) {
+//        printf("%d ", J[i]);
+//    }
+//    puts("");
+//    for (int i = 0; i < nz; ++i) {
+//        printf("%f ", val[i]);
+//    }
+//    puts("");
 
-    CUSOLVER_CHECK(cusolverSpXcsrqrAnalysisBatched(cusolverH, m, m, nnzA, descrA, d_csrRowPtrA,
-                                                   d_csrColIndA, info));
+//    cudaMallocManaged(reinterpret_cast<void **>(&x), sizeof(float) * N);
+//    cudaMallocManaged(reinterpret_cast<void **>(&rhs), sizeof(float) * N);
 
-    CUSOLVER_CHECK(cusolverSpDcsrqrBufferInfoBatched(cusolverH, m, m, nnzA, descrA, d_csrValA,
-                                                     d_csrRowPtrA, d_csrColIndA, 1, info,
-                                                     &size_internal, &size_qr));
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+    double *dot_result;
 
-    std::printf("numerical factorization needs internal data %lld bytes\n",
-                static_cast<long long>(size_internal));
-    std::printf("numerical factorization needs working space %lld bytes\n",
-                static_cast<long long>(size_qr));
+    cudaMallocManaged(reinterpret_cast<void **>(&dot_result), sizeof(double));
 
-    CUDA_CHECK(cudaMalloc(reinterpret_cast<void **>(&buffer_qr), size_qr));
+    *dot_result = 0.0;
 
+    // temp memory for CG
+    checkCudaErrors(
+            cudaMallocManaged(reinterpret_cast<void **>(&r), N * sizeof(float)));
+    checkCudaErrors(
+            cudaMallocManaged(reinterpret_cast<void **>(&p), N * sizeof(float)));
+    checkCudaErrors(
+            cudaMallocManaged(reinterpret_cast<void **>(&Ax), N * sizeof(float)));
 
-    CUSOLVER_CHECK(cusolverSpDcsrqrsvBatched(cusolverH, m, m, nnzA, descrA, d_csrValA, d_csrRowPtrA,
-                                             d_csrColIndA, d_b, d_x, 1, info, buffer_qr));
+    cudaDeviceSynchronize();
 
+    checkCudaErrors(cudaEventCreate(&start));
+    checkCudaErrors(cudaEventCreate(&stop));
 
-    CUDA_CHECK(cudaStreamSynchronize(stream));
+#if ENABLE_CPU_DEBUG_CODE
+    float *Ax_cpu = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+  float *r_cpu = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+  float *p_cpu = reinterpret_cast<float *>(malloc(sizeof(float) * N));
+  float *x_cpu = reinterpret_cast<float *>(malloc(sizeof(float) * N));
 
+  for (int i = 0; i < N; i++) {
+    r_cpu[i] = 1.0;
+    Ax_cpu[i] = x_cpu[i] = 0.0;
+  }
 
-    CUDA_CHECK(cudaFree(d_csrRowPtrA));
-    CUDA_CHECK(cudaFree(d_csrColIndA));
-    CUDA_CHECK(cudaFree(d_csrValA));
-    CUDA_CHECK(cudaFree(d_b));
-    CUDA_CHECK(cudaFree(buffer_qr));
+#endif
 
-    CUSOLVER_CHECK(cusolverSpDestroy(cusolverH));
+    for (int i = 0; i < N; i++) {
+//        r[i] = rhs[i] = 1.0;
+        r[i] = rhs[i] ;
+        x[i] = 0.0;
+    }
 
-    CUDA_CHECK(cudaStreamDestroy(stream));
+    void *kernelArgs[] = {
+            (void *) &I, (void *) &J, (void *) &val, (void *) &x,
+            (void *) &Ax, (void *) &p, (void *) &r, (void *) &dot_result,
+            (void *) &nz, (void *) &N, (void *) &tol,
+    };
 
-    CUDA_CHECK(cudaDeviceSynchronize());
+    int sMemSize = sizeof(double) * ((THREADS_PER_BLOCK / 32) + 1);
+    int numBlocksPerSm = 0;
+    int numThreads = THREADS_PER_BLOCK;
 
-    return EXIT_SUCCESS;
+    checkCudaErrors(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+            &numBlocksPerSm, gpuConjugateGradient, numThreads, sMemSize));
+
+    int numSms = deviceProp.multiProcessorCount;
+    dim3 dimGrid(numSms * numBlocksPerSm, 1, 1),
+            dimBlock(THREADS_PER_BLOCK, 1, 1);
+    checkCudaErrors(cudaEventRecord(start, 0));
+    checkCudaErrors(cudaLaunchCooperativeKernel((void *) gpuConjugateGradient,
+                                                dimGrid, dimBlock, kernelArgs,
+                                                sMemSize, NULL));
+    checkCudaErrors(cudaEventRecord(stop, 0));
+    checkCudaErrors(cudaDeviceSynchronize());
+
+    float time;
+    checkCudaErrors(cudaEventElapsedTime(&time, start, stop));
+
+    r1 = *dot_result;
+
+    printf("GPU Final, residual = %e, kernel execution time = %f ms\n", sqrt(r1),
+           time);
+
+#if ENABLE_CPU_DEBUG_CODE
+    cpuConjugateGrad(I, J, val, x_cpu, Ax_cpu, p_cpu, r_cpu, nz, N, tol);
+#endif
+
+    float rsum, diff, err = 0.0;
+
+    for (int i = 0; i < N; i++) {
+        rsum = 0.0;
+
+        for (int j = I[i]; j < I[i + 1]; j++) {
+            rsum += val[j] * x[J[j]];
+        }
+
+        diff = fabs(rsum - rhs[i]);
+
+        if (diff > err) {
+            err = diff;
+        }
+    }
+
+    checkCudaErrors(cudaFree(r));
+    checkCudaErrors(cudaFree(p));
+    checkCudaErrors(cudaFree(Ax));
+    checkCudaErrors(cudaFree(dot_result));
+    checkCudaErrors(cudaEventDestroy(start));
+    checkCudaErrors(cudaEventDestroy(stop));
+
+#if ENABLE_CPU_DEBUG_CODE
+    free(Ax_cpu);
+  free(r_cpu);
+  free(p_cpu);
+  free(x_cpu);
+#endif
+
+    printf("Test Summary:  Error amount = %f \n", err);
+
 }

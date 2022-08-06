@@ -24,9 +24,12 @@ add_executable(GPU_PoissonRecon main.cu
         Allocator.cuh Vector.cuh Vector.inl
         SparseMatrix.cuh SparseMatrix.inl
         ConfirmedSparseMatrix.cuh ConfirmedVector.cuh
-        CG_CUDA.cuh cusolver_utils.h)
+        CG_CUDA.cuh exception.h
+        helper_cuda.h helper_image.h helper_timer.h helper_string.h helper_functions.h)
 
 set_target_properties(GPU_PoissonRecon PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
 
 target_link_libraries( GPU_PoissonRecon ${CUDA_cusparse_LIBRARY} ${CUDA_cusolver_LIBRARY} ${CUDA_cublas_LIBRARY})
+
+target_compile_options(GPU_PoissonRecon PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-arch=sm_60>)
