@@ -341,9 +341,9 @@ bool areAlmostEqual(float a, float b, float maxRelDiff) {
     }
 }
 
-int solverCG_DeviceToDevice(const int& N,const int& nz,
-                            int *I, int *J, float *val, float *rhs,
-                            float *x) {
+float solverCG_DeviceToDevice(const int& N,const int& nz,
+                              int *I, int *J, float *val, float *rhs,
+                              float *x) {
     const float tol = 1e-5f;
     float r1;
     float *r, *p, *Ax;
@@ -505,4 +505,5 @@ int solverCG_DeviceToDevice(const int& N,const int& nz,
 
     printf("Test Summary:  Error amount = %f \n", err);
 
+    return time;
 }

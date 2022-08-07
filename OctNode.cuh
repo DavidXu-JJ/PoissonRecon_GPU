@@ -13,6 +13,8 @@ public:
     int parent;
     int children[8];
     int neighs[27];
+    // record the start in maxDepth NodeArray
+    // the first node at maxDepth is index 0
     int didx;
     int dnum;
 };
