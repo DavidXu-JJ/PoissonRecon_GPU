@@ -53,8 +53,24 @@ public:
     __host__ __device__ ConfirmedPPolynomial(const PPolynomial<Degree>& cpy){
         int tp=PolyCount<cpy.polyCount?PolyCount:cpy.polyCount;
         for(int i=0;i<tp;++i){
-            polys[i]=cpy.polys[i];
+            polys[i].start=cpy.polys[i].start;
+            for(int j=0;j<=Degree;j++){
+                polys[i].p.coefficients[j]=cpy.polys[i].p.coefficients[j];
+            }
+//            polys[i]=cpy.polys[i];
         }
+    }
+
+    __host__ __device__ ConfirmedPPolynomial& operator =(const PPolynomial<Degree>& cpy){
+        int tp=PolyCount<cpy.polyCount?PolyCount:cpy.polyCount;
+        for(int i=0;i<tp;++i){
+            polys[i].start=cpy.polys[i].start;
+            for(int j=0;j<=Degree;j++){
+                polys[i].p.coefficients[j]=cpy.polys[i].p.coefficients[j];
+            }
+//            polys[i]=cpy.polys[i];
+        }
+        return *this;
     }
 
 };

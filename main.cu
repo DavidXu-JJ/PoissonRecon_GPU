@@ -782,27 +782,27 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
         cudaDeviceSynchronize();
     }
 
-//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
-//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
-//    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
-//        int all=0;
-//        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j]+50; ++i) {
-////            if(a[i].pnum==0) continue;
-//            all+=a[i].dnum;
-//            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
-//                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
-////            for(int k=0;k<8;++k){
-////                printf("children[%d]:%d ",k,a[i].children[k]);
-////            }
-////            puts("");
-////            for(int k=0;k<27;++k){
-////                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
-////            }
-////            puts("");
-//        }
-//        printf("allD:%d\n",all);
-//        std::cout<<std::endl;
-//    }
+    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
+    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
+        int all=0;
+        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j]+10; ++i) {
+//            if(a[i].pnum==0) continue;
+            all+=a[i].dnum;
+            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
+                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
+            for(int k=0;k<8;++k){
+                printf("children[%d]:%d ",k,a[i].children[k]);
+            }
+            puts("");
+            for(int k=0;k<27;++k){
+                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
+            }
+            puts("");
+        }
+        printf("allD:%d\n",all);
+        std::cout<<std::endl;
+    }
 
     double ed=cpuSecond();
     printf("GPU NodeArray build takes:%lfs\n",ed-mid);
@@ -879,7 +879,7 @@ __host__ __device__ void getEncodedFunctionIdxOfNode(const int& key,const int &d
 #endif
 }
 
-__device__ double F_center_width_Point(const ConfirmedPPolynomial<2,4> &BaseFunctionMaxDepth_d,const Point3D<float> &center,const float &width,const Point3D<float> &point){
+__device__ float F_center_width_Point(const ConfirmedPPolynomial<2,4> &BaseFunctionMaxDepth_d,const Point3D<float> &center,const float &width,const Point3D<float> &point){
     ConfirmedPPolynomial<2,4> thisFunction_X = BaseFunctionMaxDepth_d.shift(center.coords[0]);
     ConfirmedPPolynomial<2,4> thisFunction_Y = BaseFunctionMaxDepth_d.shift(center.coords[1]);
     ConfirmedPPolynomial<2,4> thisFunction_Z = BaseFunctionMaxDepth_d.shift(center.coords[2]);
@@ -909,7 +909,7 @@ __global__ void computeVectorField(ConfirmedPPolynomial<2,4> *BaseFunctionMaxDep
             if(neigh!=-1){
                 for(int k=0;k<NodeArray[neigh].pnum;++k){
                     int pointIdx=NodeArray[neigh].pidx+k;
-                    double weight= F_center_width_Point(*BaseFunctionMaxDepth_d,samplePoints_d[pointIdx],width,o_c);
+                    float weight= F_center_width_Point(*BaseFunctionMaxDepth_d,samplePoints_d[pointIdx],width,o_c);
                     val.coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
                     val.coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
                     val.coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
@@ -1266,6 +1266,7 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
 //        int temp=1;
 //        CHECK(cudaMemcpy(rowCount,&temp,sizeof(int),cudaMemcpyHostToDevice));
         thrust::exclusive_scan(rowCount_ptr,rowCount_ptr+nowDepthNodesNum+1,RowBaseAddress_ptr);
+        cudaDeviceSynchronize();
         int valNums;
         int lastRowNum;
         CHECK(cudaMemcpy(&valNums,RowBaseAddress+nowDepthNodesNum,sizeof(int),cudaMemcpyDeviceToHost));
@@ -1320,6 +1321,60 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
     }
 
     printf("Pure CG solving process takes:%fms\n",total_time);
+}
+
+__global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoints_d,int *PointToNodeArrayD,int count,int start_D,
+                                                     OctNode *NodeArray,float *d_x,
+                                                     int *EncodedNodeIdxInFunction, ConfirmedPPolynomial<3,4> *baseFunctions_d,
+                                                     float *pointValue)
+{
+//    printf("count:%d\n",count);
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int maxD=maxDepth;
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
+    for(int i=offset;i<count;i+=stride){
+//    for(int i=offset;i<1;i+=stride){
+        int leaveNodeIdx = start_D + PointToNodeArrayD[i];
+        int nowNode = leaveNodeIdx;
+        float val=0.0f;
+        Point3D<float> samplePoint=samplePoints_d[i];
+//        printf("point: %f %f %f\n",samplePoint.coords[0],samplePoint.coords[1],samplePoint.coords[2]);
+        while(nowNode != -1){
+//            printf("nowNode:%d\n",nowNode);
+            for(int j=0;j<27;++j){
+                int neigh = NodeArray[nowNode].neighs[j];
+//                printf("neigh:%d\n",neigh);
+                if(neigh != -1){
+
+                    int idxO[3];
+                    int encode_idx=EncodedNodeIdxInFunction[neigh];
+                    idxO[0]=encode_idx%decode_offset1;
+                    idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+                    idxO[2]=encode_idx/decode_offset2;
+//                    printf("idxO assign ok\n");
+
+                    ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
+                    ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
+                    ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
+//                    printf("func assign ok\n");
+//                    printf("d_x:%f\n",d_x[neigh]);
+
+                    val += d_x[neigh] * value(funcX,samplePoint.coords[0])
+                                      * value(funcY,samplePoint.coords[1])
+                                      * value(funcZ,samplePoint.coords[2]);
+//                    printf("%f %f %f %f\n",d_x[neigh],value(funcX,samplePoint.coords[0]),
+//                           value(funcY,samplePoint.coords[1]),
+//                           value(funcZ,samplePoint.coords[2]));
+                }
+            }
+            nowNode = NodeArray[nowNode].parent;
+        }
+        pointValue[i]=val;
+//        printf("%d: %f\n",i,val);
+    }
 }
 
 int main() {
@@ -1393,6 +1448,24 @@ int main() {
     CHECK(cudaMalloc((double **)&dot_F_D2F,nByte));
     CHECK(cudaMemcpy(dot_F_D2F,fData.d2DotTable,nByte,cudaMemcpyHostToDevice));
 
+    ConfirmedPPolynomial<3,4> baseFunctions_h[fData.res];
+    for(int i=0;i<fData.res;++i){
+        baseFunctions_h[i]=fData.baseFunctions[i];
+    }
+
+    ConfirmedPPolynomial<3,4> *baseFunctions_d=NULL;
+    nByte=sizeof(ConfirmedPPolynomial<3,4>) * fData.res;
+    CHECK(cudaMalloc((ConfirmedPPolynomial<3,4>**)&baseFunctions_d,nByte));
+    CHECK(cudaMemcpy(baseFunctions_d,baseFunctions_h,nByte,cudaMemcpyHostToDevice));
+
+//    for(int i=0;i<4;++i){
+//        for(int j=0;j<=3;++j){
+//            printf("%f ",baseFunctions_h[200].polys[i].p.coefficients[j]);
+//        }
+//        puts("");
+//    }
+
+
     double cpu_ed=cpuSecond();
     printf("CPU generate precomputed inner product table takes:%lfs\n",cpu_ed-cpu_st);
 
@@ -1445,9 +1518,9 @@ int main() {
 
 //    float *Divergence_h=(float *)malloc(sizeof(float)*NodeArray_sz);
 //    cudaMemcpy(Divergence_h,Divergence,sizeof(float)*NodeArray_sz,cudaMemcpyDeviceToHost);
-    for(int i=BaseAddressArray[5];i<BaseAddressArray[6];++i){
-        printf("%f\n",Divergence[i]);
-    }
+//    for(int i=BaseAddressArray[5];i<BaseAddressArray[6];++i){
+//        printf("%f\n",Divergence[i]);
+//    }
 
     double mid3=cpuSecond();
     printf("Compute finer depth nodes' divergence takes:%lfs\n",mid3-mid2);
@@ -1485,6 +1558,7 @@ int main() {
             cudaDeviceSynchronize();
             thrust::device_ptr<float> divg_ptr=thrust::device_pointer_cast<float>(divg);
             float val=thrust::reduce(divg_ptr,divg_ptr+coverNums_h[27]);
+            cudaDeviceSynchronize();
 
             CHECK(cudaMemcpy(Divergence+j,&val,sizeof(float),cudaMemcpyHostToDevice));
 
@@ -1508,5 +1582,26 @@ int main() {
     double mid5=cpuSecond();
     printf("GPU Laplacian Iteration takes:%lfs\n",mid5-mid4);
 
+    float *pointValue=NULL;
+    nByte=sizeof(float)*count;
+    CHECK(cudaMalloc((float**)&pointValue,nByte));
+    CHECK(cudaMemset(pointValue,0,nByte));
+
+    grid=32;
+    block=(32,32);
+    calculatePointsImplicitFunctionValue<<<grid,block>>>(samplePoints_d,PointToNodeArrayD,count,BaseAddressArray[maxDepth_h],
+                                                         NodeArray,d_x,
+                                                         EncodedNodeIdxInFunction,baseFunctions_d,
+                                                         pointValue);
+    cudaDeviceSynchronize();
+
+    thrust::device_ptr<float> pointValue_ptr=thrust::device_pointer_cast<float>(pointValue);
+    float isoValue=thrust::reduce(pointValue_ptr,pointValue_ptr+count);
+    cudaDeviceSynchronize();
+    isoValue/=count;
+    printf("isoValue:%f\n",isoValue);
+
+    double mid6 = cpuSecond();
+    printf("GPU calculate isoValue takes:%lfs",mid6-mid5);
 
 }

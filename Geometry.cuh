@@ -36,6 +36,11 @@ struct Point3D{
     Real coords[3];
     inline       Real& operator[] ( int i )       { return coords[i]; }
     inline const Real& operator[] ( int i ) const { return coords[i]; }
+    __host__ __device__ Point3D<Real>& operator = (const Point3D<Real> &cpy){
+        coords[0]=cpy.coords[0];
+        coords[1]=cpy.coords[1];
+        coords[2]=cpy.coords[2];
+    };
 };
 
 template<class Real>
