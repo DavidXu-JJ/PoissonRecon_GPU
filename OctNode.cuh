@@ -19,5 +19,10 @@ public:
     int dnum;
 };
 
+class VertexNode{
+public:
+    Point3D<float> pos;
+    int ownerNodeIdx;
+};
 
 #endif //GPU_POISSONRECON_OCTNODE_CUH

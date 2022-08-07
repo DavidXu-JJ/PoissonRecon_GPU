@@ -36,24 +36,35 @@ struct Point3D{
     Real coords[3];
     inline       Real& operator[] ( int i )       { return coords[i]; }
     inline const Real& operator[] ( int i ) const { return coords[i]; }
+    __host__ __device__ Point3D(void){
+        coords[0]=0;
+        coords[1]=0;
+        coords[2]=0;
+    }
+    __host__ __device__ Point3D(const Point3D<Real>& cpy){
+        coords[0]=cpy.coords[0];
+        coords[1]=cpy.coords[1];
+        coords[2]=cpy.coords[2];
+    }
     __host__ __device__ Point3D<Real>& operator = (const Point3D<Real> &cpy){
         coords[0]=cpy.coords[0];
         coords[1]=cpy.coords[1];
         coords[2]=cpy.coords[2];
-    };
+        return *this;
+    }
 };
 
 template<class Real>
 double Length(const Point3D<Real>& p);
 
 template<class Real>
-double SquareLength(const Point3D<Real>& p);
+__host__ __device__ double SquareLength(const Point3D<Real>& p);
 
 template<class Real>
 double Distance(const Point3D<Real>& p1,const Point3D<Real>& p2);
 
 template<class Real>
-double SquareDistance(const Point3D<Real>& p1,const Point3D<Real>& p2);
+__host__ __device__ double SquareDistance(const Point3D<Real>& p1,const Point3D<Real>& p2);
 
 template <class Real>
 void CrossProduct(const Point3D<Real>& p1,const Point3D<Real>& p2,Point3D<Real>& p);

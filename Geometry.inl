@@ -27,13 +27,13 @@ DAMAGE.
 */
 
 template<class Real>
-double SquareLength(const Point3D<Real>& p){return p.coords[0]*p.coords[0]+p.coords[1]*p.coords[1]+p.coords[2]*p.coords[2];}
+__host__ __device__ double SquareLength(const Point3D<Real>& p){return p.coords[0]*p.coords[0]+p.coords[1]*p.coords[1]+p.coords[2]*p.coords[2];}
 
 template<class Real>
 double Length(const Point3D<Real>& p){return sqrt(SquareLength(p));}
 
 template<class Real>
-double SquareDistance(const Point3D<Real>& p1,const Point3D<Real>& p2){
+__host__ __device__ double SquareDistance(const Point3D<Real>& p1,const Point3D<Real>& p2){
     return (p1.coords[0]-p2.coords[0])*(p1.coords[0]-p2.coords[0])+(p1.coords[1]-p2.coords[1])*(p1.coords[1]-p2.coords[1])+(p1.coords[2]-p2.coords[2])*(p1.coords[2]-p2.coords[2]);
 }
 
