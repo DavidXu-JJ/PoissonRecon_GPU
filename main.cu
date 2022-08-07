@@ -443,11 +443,13 @@ __global__ void updateEmptyNodeInfo(int *BaseAddressArray_d,OctNode *NodeArray,i
             }
             NodeArray[idx].key = baseKey + ( j << (3 * (maxDepth-depth)) );
 
-            NodeArray[idx].pidx= nowPIdx;
+            NodeArray[idx].pidx = nowPIdx;
             nowPIdx += NodeArray[idx].pnum;
 
-            NodeArray[idx].didx= nowDIdx;
-            nowDIdx += NodeArray[idx].dnum;
+            if(depth != maxDepth) {
+                NodeArray[idx].didx = nowDIdx;
+                nowDIdx += NodeArray[idx].dnum;
+            }
 
             NodeArray[idx].parent=commonParent;
 
@@ -650,6 +652,23 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
     processPointToNodeArrayD<<<grid,block>>>(PointToNodeArrayD,count);
     cudaDeviceSynchronize();
 
+
+//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*allNodeNums);
+//    cudaMemcpy(a,NodeArrayD,sizeof(OctNode)*(allNodeNums),cudaMemcpyDeviceToHost);
+//    for (int i = 0; i < 50; ++i) {
+////            if(a[i].pnum==0) continue;
+//        std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
+//                  << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
+////            for(int k=0;k<8;++k){
+////                printf("children[%d]:%d ",k,a[i].children[k]);
+////            }
+////            puts("");
+////            for(int k=0;k<27;++k){
+////                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
+////            }
+////            puts("");
+//    }
+
     /**     D-1     */
     memset(BaseAddressArray_h,0,sizeof(int) * (maxDepth_h+1));
     OctNode **NodeArrays=(OctNode **)malloc(sizeof(OctNode *) * (maxDepth_h+1));
@@ -772,14 +791,14 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
 //            all+=a[i].dnum;
 //            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
 //                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
-//            for(int k=0;k<8;++k){
-//                printf("children[%d]:%d ",k,a[i].children[k]);
-//            }
-//            puts("");
-//            for(int k=0;k<27;++k){
-//                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
-//            }
-//            puts("");
+////            for(int k=0;k<8;++k){
+////                printf("children[%d]:%d ",k,a[i].children[k]);
+////            }
+////            puts("");
+////            for(int k=0;k<27;++k){
+////                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
+////            }
+////            puts("");
 //        }
 //        printf("allD:%d\n",all);
 //        std::cout<<std::endl;
