@@ -1529,6 +1529,9 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
                 NodeArray[neigh[k]].vertices[idx] = i+1;
             }
         }
+//        if(cnt>8){
+//            printf("error\n");
+//        }
     }
 }
 
@@ -1695,6 +1698,51 @@ struct validEdge{
         return x.ownerNodeIdx > 0;
     }
 };
+
+__global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int VertexArray_sz,
+                                                   OctNode *NodeArray,float *d_x,
+                                                   int *EncodedNodeIdxInFunction,ConfirmedPPolynomial<3,4> *baseFunctions_d,
+                                                   float *vvalue,float isoValue)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int maxD=maxDepth;
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
+    for(int i=offset;i<VertexArray_sz;i+=stride){
+        VertexNode nowVertex=VertexArray[i];
+        float val=0.0f;
+        for(int j=0;j<8;++j){
+            int nowNode=nowVertex.nodes[j];
+            if(nowNode>0){
+                while(nowNode != -1){
+                    for(int k=0;k<27;++k){
+                        int neigh = NodeArray[nowNode].neighs[k];
+                        if(neigh != -1){
+                            int idxO[3];
+                            int encode_idx=EncodedNodeIdxInFunction[neigh];
+                            idxO[0]=encode_idx%decode_offset1;
+                            idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+                            idxO[2]=encode_idx/decode_offset2;
+
+                            ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
+                            ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
+                            ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
+
+                            val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
+                                              * value(funcY,nowVertex.pos.coords[1])
+                                              * value(funcZ,nowVertex.pos.coords[2]);
+                        }
+                    }
+                    nowNode = NodeArray[nowNode].parent;
+                }
+            }else break;
+        }
+        vvalue[i]=val-isoValue;
+    }
+//    printf("thread finish\n");
+}
 
 
 int main() {
@@ -2021,6 +2069,7 @@ int main() {
 //            for(int k=0;k<8;++k){
 //                printf("vertices[%d]:%d ",k,a[i].vertices[k]);
 //            }
+//            puts("");
 //            for(int k=0;k<12;++k){
 //                printf("edges[%d]:%d ",k,a[i].edges[k]);
 //            }
@@ -2032,5 +2081,16 @@ int main() {
 
     double mid8=cpuSecond();
     printf("EdgeArray_sz:%d\nGPU build EdgeArray takes:%lfs\n",EdgeArray_sz,mid8-mid7);
+
+    float *vvalue = NULL;
+    nByte = sizeof(float) * VertexArray_sz;
+    CHECK(cudaMalloc((float**)&vvalue,nByte));
+    CHECK(cudaMemset(vvalue,0,nByte));
+
+    computeVertexImplicitFunctionValue<<<grid,block>>>(VertexArray,VertexArray_sz,
+                                                       NodeArray,d_x,
+                                                       EncodedNodeIdxInFunction,baseFunctions_d,
+                                                       vvalue,isoValue);
+    cudaDeviceSynchronize();
 
 }
