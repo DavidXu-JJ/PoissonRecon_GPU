@@ -1458,6 +1458,74 @@ struct validVertex{
     }
 };
 
+// deprecated
+__global__ void maintainVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    float halfWidth = 1.0f/(1<<(maxDepth+1));
+    float Width = 1.0f/(1<<(maxDepth));
+    float Widthsq = Width * Width;
+    for(int i=offset;i<VertexArray_sz;i+=stride){
+        int owner=VertexArray[i].ownerNodeIdx;
+        Point3D<float> neighCenter[27];
+        Point3D<float> vertexPos=VertexArray[i].pos;
+        int neigh[27];
+        for(int k=0;k<27;++k){
+            neigh[k]=NodeArray[owner].neighs[k];
+            if(neigh[k] != -1){
+                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+            }
+        }
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(vertexPos,neighCenter[k]) < Widthsq){
+                VertexArray[i].nodes[cnt]=neigh[k];
+                ++cnt;
+                int idx=0;
+                while(idx<8){
+                    int prev= atomicCAS(&NodeArray[neigh[k]].vertices[idx],0,i+1);
+                    if(prev == 0) break;
+                    ++idx;
+                }
+            }
+        }
+    }
+}
+
+__global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    float halfWidth = 1.0f/(1<<(maxDepth+1));
+    float Width = 1.0f/(1<<(maxDepth));
+    float Widthsq = Width * Width;
+    for(int i=offset;i<VertexArray_sz;i+=stride){
+        int owner=VertexArray[i].ownerNodeIdx;
+        Point3D<float> neighCenter[27];
+        Point3D<float> vertexPos=VertexArray[i].pos;
+        int neigh[27];
+        for(int k=0;k<27;++k){
+            neigh[k]=NodeArray[owner].neighs[k];
+            if(neigh[k] != -1){
+                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+            }
+        }
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(vertexPos,neighCenter[k]) < Widthsq){
+                VertexArray[i].nodes[cnt]=neigh[k];
+                ++cnt;
+                int idx=0;
+                if(neighCenter[k].coords[0]-vertexPos.coords[0] < 0) idx+=1;
+                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) idx+=2;
+                if(neighCenter[k].coords[2]-vertexPos.coords[2] < 0) idx+=4;
+                NodeArray[neigh[k]].vertices[idx] = i+1;
+            }
+        }
+    }
+}
+
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
     char fileName[]="/home/davidxu/bunny.points.ply";
@@ -1708,6 +1776,34 @@ int main() {
 
     int VertexArray_sz=VertexArray_end-VertexArray_ptr;
 
+    maintainVertexNodePointerNonAtomic<<<grid,block>>>(VertexArray,VertexArray_sz,NodeArray);
+    cudaDeviceSynchronize();
+
+//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
+//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+//    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
+//        int all=0;
+//        for (int i = BaseAddressArray[j]; i < BaseAddressArray[j]+10; ++i) {
+////            if(a[i].pnum==0) continue;
+//            all+=a[i].dnum;
+//            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
+//                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
+//            for(int k=0;k<8;++k){
+//                printf("children[%d]:%d ",k,a[i].children[k]);
+//            }
+//            puts("");
+//            for(int k=0;k<27;++k){
+//                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
+//            }
+//            puts("");
+//            for(int k=0;k<8;++k){
+//                printf("vertices[%d]:%d ",k,a[i].vertices[k]);
+//            }
+//            puts("");
+//        }
+//        printf("allD:%d\n",all);
+//        std::cout<<std::endl;
+//    }
 
     double mid7=cpuSecond();
     printf("VertexArray_sz:%d\nGPU build VertexArray takes:%lfs\n",VertexArray_sz,mid7-mid6);

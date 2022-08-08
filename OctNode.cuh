@@ -17,12 +17,16 @@ public:
     // the first node at maxDepth is index 0
     int didx;
     int dnum;
+    // real idx + 1,
+    // idx start from (0 + 1)
+    int vertices[8];
 };
 
 class VertexNode{
 public:
     Point3D<float> pos;
     int ownerNodeIdx;
+    int nodes[8];
 };
 
 #endif //GPU_POISSONRECON_OCTNODE_CUH
