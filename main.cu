@@ -1744,6 +1744,51 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
 //    printf("thread finish\n");
 }
 
+__device__ int VertexIndex(const int &x,const int &y,const int &z){
+    return (z<<2)|(y<<1)|x;
+}
+
+__global__ void generateVexNums(EdgeNode *EdgeArray,int EdgeArray_sz,
+                                OctNode *NodeArray,float *vvalue,
+                                int *vexNums)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<EdgeArray_sz;i+=stride){
+        EdgeNode nowEdge=EdgeArray[i];
+        int owner=nowEdge.ownerNodeIdx;
+        int kind=nowEdge.edgeKind;
+        int orientation=kind>>2;
+        int off[2];
+        off[0]=kind&1;
+        off[1]=(kind&2)>>1;
+        int idx[2];
+        switch (orientation) {
+            case 0:
+                idx[0]= VertexIndex(0,off[0],off[1]);
+                idx[1]= VertexIndex(1,off[0],off[1]);
+                break;
+            case 1:
+                idx[0]= VertexIndex(off[0],0,off[1]);
+                idx[1]= VertexIndex(off[0],1,off[1]);
+                break;
+            case 2:
+                idx[0]= VertexIndex(off[0],off[1],0);
+                idx[1]= VertexIndex(off[0],off[1],1);
+                break;
+            default:
+                printf("error\n");
+        }
+        OctNode ownerNode=NodeArray[owner];
+        int v1=ownerNode.vertices[idx[0]]-1;
+        int v2=ownerNode.vertices[idx[1]]-1;
+        if(vvalue[v1]*vvalue[v2]<=0){
+            vexNums[i]=1;
+        }
+    }
+}
+
 
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
@@ -2082,6 +2127,7 @@ int main() {
     double mid8=cpuSecond();
     printf("EdgeArray_sz:%d\nGPU build EdgeArray takes:%lfs\n",EdgeArray_sz,mid8-mid7);
 
+    // Step 1: compute implicit function values for octree vertices
     float *vvalue = NULL;
     nByte = sizeof(float) * VertexArray_sz;
     CHECK(cudaMalloc((float**)&vvalue,nByte));
@@ -2091,6 +2137,28 @@ int main() {
                                                        NodeArray,d_x,
                                                        EncodedNodeIdxInFunction,baseFunctions_d,
                                                        vvalue,isoValue);
+    cudaDeviceSynchronize();
+
+    // Step 2: compute vertex number and address
+    int *vexNums=NULL;
+    nByte = sizeof(int) * EdgeArray_sz;
+    CHECK(cudaMalloc((int**)&vexNums,nByte));
+    CHECK(cudaMemset(vexNums,0,nByte));
+
+    generateVexNums<<<grid,block>>>(EdgeArray,EdgeArray_sz,
+                                    NodeArray,vvalue,
+                                    vexNums);
+    cudaDeviceSynchronize();
+
+    int *vexAddress=NULL;
+//    nByte = sizeof(int) * EdgeArray_sz;
+    CHECK(cudaMalloc((int**)&vexAddress,nByte));
+    CHECK(cudaMemset(vexAddress,0,nByte));
+
+    thrust::device_ptr<int> vexNums_ptr=thrust::device_pointer_cast<int>(vexNums);
+    thrust::device_ptr<int> vexAddress_ptr=thrust::device_pointer_cast<int>(vexAddress);
+
+    thrust::inclusive_scan(vexNums_ptr,vexNums_ptr+EdgeArray_sz,vexAddress_ptr);
     cudaDeviceSynchronize();
 
 }
