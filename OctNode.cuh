@@ -17,9 +17,11 @@ public:
     // the first node at maxDepth is index 0
     int didx;
     int dnum;
-    // real idx + 1,
+    // (real idx) + 1,
     // idx start from (0 + 1)
     int vertices[8];
+    // (real idx) + 1,
+    // idx start from (0 + 1)
     int edges[12];
 };
 
@@ -32,8 +34,9 @@ public:
 
 class EdgeNode{
 public:
-    int orientation;
-    int off[2];
+//    int orientation;
+//    int off[2];
+    int edgeKind;
     int ownerNodeIdx;
     int nodes[4];
 };

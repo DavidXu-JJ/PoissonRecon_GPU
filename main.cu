@@ -1387,10 +1387,13 @@ __device__ void getNodeCenter(const int &key,Point3D<float> &myCenter){
     for(int i=maxDepth-1;i>=0;--i){
         if(( key >> (3 * i + 2) ) & 1)
             myCenter.coords[0] += myWidth;
+        else myCenter.coords[0] -= myWidth;
         if(( key >> (3 * i + 1) ) & 1)
             myCenter.coords[1] += myWidth;
+        else myCenter.coords[1] -=myWidth;
         if(( key >> (3 * i) ) & 1)
             myCenter.coords[2] += myWidth;
+        else myCenter.coords[2] -=myWidth;
         myWidth/=2;
     }
 }
@@ -1429,8 +1432,10 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
         for(int j=0;j<8;++j)
             NodeOwnerKey[j]=0x7fffffff;
         for(int j=0;j<8;++j){
+//            int cnt=0;
             for(int k=0;k<27;++k){
                 if(neigh[k] != -1 && SquareDistance(vertexPos[j],neighCenter[k]) < Widthsq){
+//                    ++cnt;
                     int neighKey=NodeArray[neigh[k]].key;
                     if(NodeOwnerKey[j]>neighKey){
                         NodeOwnerKey[j]=neighKey;
@@ -1438,6 +1443,7 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
                     }
                 }
             }
+//            printf("cnt:%d\n",cnt);
         }
 #pragma unroll
         for(int j=0;j<8;++j) {
@@ -1517,9 +1523,9 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
                 VertexArray[i].nodes[cnt]=neigh[k];
                 ++cnt;
                 int idx=0;
-                if(neighCenter[k].coords[0]-vertexPos.coords[0] < 0) idx+=1;
-                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) idx+=2;
-                if(neighCenter[k].coords[2]-vertexPos.coords[2] < 0) idx+=4;
+                if(neighCenter[k].coords[0]-vertexPos.coords[0] < 0) idx|=1;
+                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) idx|=2;
+                if(neighCenter[k].coords[2]-vertexPos.coords[2] < 0) idx|=4;
                 NodeArray[neigh[k]].vertices[idx] = i+1;
             }
         }
@@ -1548,6 +1554,14 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *pr
             }
         }
         const Point3D<float> &nodeCenter = neighCenter[13];
+//        for(int k=0;k<27;++k){
+//            if(neigh[k] != -1){
+//                for(int t=0;t<3;++t){
+//                    printf("ratio:%f ",(neighCenter[k].coords[t]-nodeCenter.coords[t])/Width);
+//                }
+//                printf("\n");
+//            }
+//        }
         Point3D<float> edgeCenterPos[12];
         int orientation[12];
         int off[24];
@@ -1557,46 +1571,131 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *pr
             off[2*j] = j&1;
             off[2*j+1] = (j&2)>>1;
             int multi[3];
-            int idx=2*j;
+            int dim=2*j;
             for(int k=0;k<3;++k){
                 if(orientation[j]==k){
                     multi[k]=0;
                 }else{
-                    multi[k]=(2 * off[idx] - 1);
-                    ++idx;
+                    multi[k]=(2 * off[dim] - 1);
+                    ++dim;
                 }
             }
             edgeCenterPos[j].coords[0] = nodeCenter.coords[0] + multi[0] * halfWidth;
             edgeCenterPos[j].coords[1] = nodeCenter.coords[1] + multi[1] * halfWidth;
             edgeCenterPos[j].coords[2] = nodeCenter.coords[2] + multi[2] * halfWidth;
+//            printf("multi:%d %d %d\n",multi[0],multi[1],multi[2]);
         }
 
+//        printf("precalculate center ok\n");
 #pragma unroll
         for(int j=0;j<12;++j)
             NodeOwnerKey[j]=0x7fffffff;
         for(int j=0;j<12;++j){
+//            int cnt=0;
             for(int k=0;k<27;++k){
                 if(neigh[k] != -1 && SquareDistance(edgeCenterPos[j],neighCenter[k]) < Widthsq){
+//                    for(int t=0;t<3;++t){
+//                        printf("%f ",edgeCenterPos[j].coords[t]);
+//                    }
+//                    printf("\n");
+//                    for(int t=0;t<3;++t){
+//                        printf("%f ",neighCenter[k].coords[t]);
+//                    }
+//                    printf("\n");
+//                    printf("%d %d %f %f\n",j,k,SquareDistance(edgeCenterPos[j],neighCenter[k]),Widthsq);
                     int neighKey=NodeArray[neigh[k]].key;
+//                    cnt++;
                     if(NodeOwnerKey[j]>neighKey){
                         NodeOwnerKey[j]=neighKey;
                         NodeOwnerIdx[j]=neigh[k];
                     }
                 }
             }
+//            printf("cnt:%d\n",cnt);
         }
+//        printf("precalculate ok\n");
 #pragma unroll
         for(int j=0;j<12;++j) {
             if(NodeOwnerIdx[j] == i) {
                 int edgeIdx = 12 * (i - left) + j;
                 preEdgeArray[edgeIdx].ownerNodeIdx = NodeOwnerIdx[j];
-                preEdgeArray[edgeIdx].orientation = orientation[j];
-                preEdgeArray[edgeIdx].off[0] = off[2*j];
-                preEdgeArray[edgeIdx].off[1] = off[2*j + 1];
+                preEdgeArray[edgeIdx].edgeKind = j;
+//                preEdgeArray[edgeIdx].edgeKind = off[2*j] | (off[2*j+1]<<1) | (orientation[j]<<2);
+//                preEdgeArray[edgeIdx].orientation = orientation[j];
+//                preEdgeArray[edgeIdx].off[0] = off[2*j];
+//                preEdgeArray[edgeIdx].off[1] = off[2*j + 1];
+            }
+        }
+    }
+//    printf("thread finish\n");
+}
+
+__global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,OctNode *NodeArray){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    float halfWidth = 1.0f/(1<<(maxDepth+1));
+    float Width = 1.0f/(1<<(maxDepth));
+    float Widthsq = Width * Width;
+    for(int i=offset;i<EdgeArray_sz;i+=stride){
+        EdgeNode nowEdge = EdgeArray[i];
+        int owner = nowEdge.ownerNodeIdx;
+
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+        for(int k=0;k<27;++k){
+            neigh[k]=NodeArray[owner].neighs[k];
+            if(neigh[k] != -1){
+                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+            }
+        }
+
+        const Point3D<float> &nodeCenter = neighCenter[13];
+        Point3D<float> edgeCenterPos;
+        int multi[3];
+        int dim=0;
+        int orientation = nowEdge.edgeKind>>2;
+        int off[2];
+        off[0] = nowEdge.edgeKind & 1;
+        off[1] = (nowEdge.edgeKind & 2)>>1;
+        for(int k=0;k<3;++k){
+            if(orientation==k){
+                multi[k]=0;
+            }else{
+                multi[k]=(2 * off[dim] - 1);
+                ++dim;
+            }
+        }
+        edgeCenterPos.coords[0] = nodeCenter.coords[0] + multi[0] * halfWidth;
+        edgeCenterPos.coords[1] = nodeCenter.coords[1] + multi[1] * halfWidth;
+        edgeCenterPos.coords[2] = nodeCenter.coords[2] + multi[2] * halfWidth;
+
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(edgeCenterPos,neighCenter[k]) < Widthsq){
+                EdgeArray[i].nodes[cnt]=neigh[k];
+                ++cnt;
+                int idx=orientation<<2;
+                int dim=0;
+                for(int j=0;j<3;++j){
+                    if(orientation!=j){
+                        if(neighCenter[k].coords[j]-edgeCenterPos.coords[j] < 0) idx |= (1<<dim);
+                        ++dim;
+                    }
+                }
+                NodeArray[neigh[k]].edges[idx] = i+1;
             }
         }
     }
 }
+
+
+struct validEdge{
+    __device__ bool operator()(const EdgeNode &x){
+        return x.ownerNodeIdx > 0;
+    }
+};
+
 
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
@@ -1840,7 +1939,7 @@ int main() {
 
     VertexNode *VertexArray=NULL;
 //    nByte=sizeof(VertexNode) * 8 * NodeDNum;
-    CHECK(cudaMallocManaged((VertexNode**)&VertexArray,nByte));
+    CHECK(cudaMalloc((VertexNode**)&VertexArray,nByte));
     CHECK(cudaMemset(VertexArray,0,nByte));
     thrust::device_ptr<VertexNode> preVertexArray_ptr=thrust::device_pointer_cast<VertexNode>(preVertexArray);
     thrust::device_ptr<VertexNode> VertexArray_ptr=thrust::device_pointer_cast<VertexNode>(VertexArray);
@@ -1889,8 +1988,49 @@ int main() {
     initEdgeArray<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preEdgeArray);
     cudaDeviceSynchronize();
 
+    EdgeNode *EdgeArray=NULL;
+//    nByte=sizeof(VertexNode) * 8 * NodeDNum;
+    CHECK(cudaMalloc((EdgeNode**)&EdgeArray,nByte));
+    CHECK(cudaMemset(EdgeArray,0,nByte));
+    thrust::device_ptr<EdgeNode> preEdgeArray_ptr=thrust::device_pointer_cast<EdgeNode>(preEdgeArray);
+    thrust::device_ptr<EdgeNode> EdgeArray_ptr=thrust::device_pointer_cast<EdgeNode>(EdgeArray);
+    thrust::device_ptr<EdgeNode> EdgeArray_end=thrust::copy_if(preEdgeArray_ptr,preEdgeArray_ptr+12*NodeDNum,EdgeArray_ptr,validEdge());
 
+    int EdgeArray_sz=EdgeArray_end-EdgeArray_ptr;
 
+    maintainEdgeNodePointer<<<grid,block>>>(EdgeArray,EdgeArray_sz,NodeArray);
+    cudaDeviceSynchronize();
 
+//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
+//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
+//    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
+//        int all=0;
+//        for (int i = BaseAddressArray[j]; i < BaseAddressArray[j]+10; ++i) {
+////            if(a[i].pnum==0) continue;
+//            all+=a[i].dnum;
+//            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
+//                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
+//            for(int k=0;k<8;++k){
+//                printf("children[%d]:%d ",k,a[i].children[k]);
+//            }
+//            puts("");
+//            for(int k=0;k<27;++k){
+//                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
+//            }
+//            puts("");
+//            for(int k=0;k<8;++k){
+//                printf("vertices[%d]:%d ",k,a[i].vertices[k]);
+//            }
+//            for(int k=0;k<12;++k){
+//                printf("edges[%d]:%d ",k,a[i].edges[k]);
+//            }
+//            puts("");
+//        }
+//        printf("allD:%d\n",all);
+//        std::cout<<std::endl;
+//    }
+
+    double mid8=cpuSecond();
+    printf("EdgeArray_sz:%d\nGPU build EdgeArray takes:%lfs\n",EdgeArray_sz,mid8-mid7);
 
 }
