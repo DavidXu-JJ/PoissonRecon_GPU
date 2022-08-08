@@ -25,7 +25,7 @@ add_executable(GPU_PoissonRecon main.cu
         SparseMatrix.cuh SparseMatrix.inl
         ConfirmedSparseMatrix.cuh ConfirmedVector.cuh
         CG_CUDA.cuh exception.h
-        helper_cuda.h helper_image.h helper_timer.h helper_string.h helper_functions.h)
+        helper_cuda.h helper_image.h helper_timer.h helper_string.h helper_functions.h MarchingCubes.cuh)
 
 set_target_properties(GPU_PoissonRecon PROPERTIES
         CUDA_SEPARABLE_COMPILATION ON)
