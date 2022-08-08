@@ -22,6 +22,7 @@
 #include "ConfirmedPPolynomial.cuh"
 #include "ConfirmedSparseMatrix.cuh"
 #include "CG_CUDA.cuh"
+#include "MarchingCubes.cuh"
 
 //! maybe cudaMemset and cudaMemcpy can be optimized into async function
 
@@ -1789,6 +1790,26 @@ __global__ void generateVexNums(EdgeNode *EdgeArray,int EdgeArray_sz,
     }
 }
 
+__global__ void generateTriNums(OctNode *NodeArray,
+                                int left,int right,
+                                float *vvalue,
+                                int *triNums)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        OctNode nowNode=NodeArray[i];
+        int cubeCatagory=0;
+        for(int j=0;j<8;++j){
+            if(vvalue[nowNode.vertices[j]-1] < 0){
+                cubeCatagory |= 1<<j;
+            }
+        }
+        triNums[i-left]=trianglesCount[cubeCatagory];
+    }
+}
 
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
@@ -2159,6 +2180,29 @@ int main() {
     thrust::device_ptr<int> vexAddress_ptr=thrust::device_pointer_cast<int>(vexAddress);
 
     thrust::inclusive_scan(vexNums_ptr,vexNums_ptr+EdgeArray_sz,vexAddress_ptr);
+    cudaDeviceSynchronize();
+
+    // Step 3: compute triangle number and address
+    int *triNums=NULL;
+    nByte = sizeof(int) * NodeDNum;
+    CHECK(cudaMalloc((int**)&triNums,nByte));
+    CHECK(cudaMemset(triNums,0,nByte));
+
+    generateTriNums<<<grid,block>>>(NodeArray,
+                                    BaseAddressArray[maxDepth_h],NodeArray_sz,
+                                    vvalue,
+                                    triNums);
+    cudaDeviceSynchronize();
+
+    int *triAddress=NULL;
+//    nByte = sizeof(int) * NodeDNum;
+    CHECK(cudaMalloc((int**)&triAddress,nByte));
+    CHECK(cudaMemset(triAddress,0,nByte));
+
+    thrust::device_ptr<int> triNums_ptr=thrust::device_pointer_cast<int>(triNums);
+    thrust::device_ptr<int> triAddress_ptr=thrust::device_pointer_cast<int>(triAddress);
+
+    thrust::inclusive_scan(triNums_ptr,triNums_ptr+NodeDNum,triAddress_ptr);
     cudaDeviceSynchronize();
 
 }
