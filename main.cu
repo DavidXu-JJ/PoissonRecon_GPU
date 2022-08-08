@@ -1526,6 +1526,78 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
     }
 }
 
+// use for node at maxDepth
+__global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *preEdgeArray){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    int NodeOwnerKey[12];
+    int NodeOwnerIdx[12];
+    float halfWidth = 1.0f/(1<<(maxDepth+1));
+    float Width = 1.0f/(1<<(maxDepth));
+    float Widthsq = Width * Width;
+    for(int i=offset;i<right;i+=stride){
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+#pragma unroll
+        for(int k=0;k<27;++k){
+            neigh[k]=NodeArray[i].neighs[k];
+            if(neigh[k] != -1){
+                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+            }
+        }
+        const Point3D<float> &nodeCenter = neighCenter[13];
+        Point3D<float> edgeCenterPos[12];
+        int orientation[12];
+        int off[24];
+#pragma unroll
+        for(int j=0;j<12;++j) {
+            orientation[j] = j>>2 ;
+            off[2*j] = j&1;
+            off[2*j+1] = (j&2)>>1;
+            int multi[3];
+            int idx=2*j;
+            for(int k=0;k<3;++k){
+                if(orientation[j]==k){
+                    multi[k]=0;
+                }else{
+                    multi[k]=(2 * off[idx] - 1);
+                    ++idx;
+                }
+            }
+            edgeCenterPos[j].coords[0] = nodeCenter.coords[0] + multi[0] * halfWidth;
+            edgeCenterPos[j].coords[1] = nodeCenter.coords[1] + multi[1] * halfWidth;
+            edgeCenterPos[j].coords[2] = nodeCenter.coords[2] + multi[2] * halfWidth;
+        }
+
+#pragma unroll
+        for(int j=0;j<12;++j)
+            NodeOwnerKey[j]=0x7fffffff;
+        for(int j=0;j<12;++j){
+            for(int k=0;k<27;++k){
+                if(neigh[k] != -1 && SquareDistance(edgeCenterPos[j],neighCenter[k]) < Widthsq){
+                    int neighKey=NodeArray[neigh[k]].key;
+                    if(NodeOwnerKey[j]>neighKey){
+                        NodeOwnerKey[j]=neighKey;
+                        NodeOwnerIdx[j]=neigh[k];
+                    }
+                }
+            }
+        }
+#pragma unroll
+        for(int j=0;j<12;++j) {
+            if(NodeOwnerIdx[j] == i) {
+                int edgeIdx = 12 * (i - left) + j;
+                preEdgeArray[edgeIdx].ownerNodeIdx = NodeOwnerIdx[j];
+                preEdgeArray[edgeIdx].orientation = orientation[j];
+                preEdgeArray[edgeIdx].off[0] = off[2*j];
+                preEdgeArray[edgeIdx].off[1] = off[2*j + 1];
+            }
+        }
+    }
+}
+
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
     char fileName[]="/home/davidxu/bunny.points.ply";
@@ -1754,6 +1826,7 @@ int main() {
     double mid6 = cpuSecond();
     printf("isoValue:%f\nGPU calculate isoValue takes:%lfs\n",isoValue,mid6-mid5);
 
+    // pre-compute the center of node ?
 
     // generate vertex at maxDepth
     VertexNode *preVertexArray=NULL;
@@ -1807,5 +1880,17 @@ int main() {
 
     double mid7=cpuSecond();
     printf("VertexArray_sz:%d\nGPU build VertexArray takes:%lfs\n",VertexArray_sz,mid7-mid6);
+
+    EdgeNode *preEdgeArray=NULL;
+    nByte = sizeof(EdgeNode) * 12 *NodeDNum;
+    CHECK(cudaMalloc((EdgeNode**)&preEdgeArray,nByte));
+    CHECK(cudaMemset(preEdgeArray,0,nByte));
+
+    initEdgeArray<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preEdgeArray);
+    cudaDeviceSynchronize();
+
+
+
+
 
 }

@@ -20,6 +20,7 @@ public:
     // real idx + 1,
     // idx start from (0 + 1)
     int vertices[8];
+    int edges[12];
 };
 
 class VertexNode{
@@ -27,6 +28,14 @@ public:
     Point3D<float> pos;
     int ownerNodeIdx;
     int nodes[8];
+};
+
+class EdgeNode{
+public:
+    int orientation;
+    int off[2];
+    int ownerNodeIdx;
+    int nodes[4];
 };
 
 #endif //GPU_POISSONRECON_OCTNODE_CUH
