@@ -1811,6 +1811,65 @@ __global__ void generateTriNums(OctNode *NodeArray,
     }
 }
 
+__device__ void interpolatePoint(Point3D<float> p1,Point3D<float> p2,
+                                 const int &dim,float v1,float v2,
+                                 Point3D<float> & out)
+{
+    for(int i=0;i<3;++i){
+        if(i!=dim){
+            out.coords[i]=p1.coords[i];
+        }
+    }
+    float pivot = v1/(v1-v2);
+    out.coords[dim]=p1.coords[dim]+(p2.coords[dim]-p1.coords[dim])*pivot;
+}
+
+__global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
+                                          VertexNode *VertexArray,OctNode *NodeArray,
+                                          int *vexNums,int *vexAddress,float *vvalue,
+                                          Point3D<float> *VertexBuffer)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<EdgeArray_sz;++i){
+        if(vexNums[i] == 1){
+            EdgeNode nowEdge=EdgeArray[i];
+            int owner=nowEdge.ownerNodeIdx;
+            int kind=nowEdge.edgeKind;
+            int orientation=kind>>2;
+            int off[2];
+            off[0]=kind&1;
+            off[1]=(kind&2)>>1;
+            int idx[2];
+            switch (orientation) {
+                case 0:
+                    idx[0]= VertexIndex(0,off[0],off[1]);
+                    idx[1]= VertexIndex(1,off[0],off[1]);
+                    break;
+                case 1:
+                    idx[0]= VertexIndex(off[0],0,off[1]);
+                    idx[1]= VertexIndex(off[0],1,off[1]);
+                    break;
+                case 2:
+                    idx[0]= VertexIndex(off[0],off[1],0);
+                    idx[1]= VertexIndex(off[0],off[1],1);
+                    break;
+                default:
+                    printf("error\n");
+            }
+            OctNode ownerNode=NodeArray[owner];
+            int v1=ownerNode.vertices[idx[0]]-1;
+            int v2=ownerNode.vertices[idx[1]]-1;
+            Point3D<float> isoPoint;
+            interpolatePoint(VertexArray[v1].pos,VertexArray[v2].pos,
+                             orientation,vvalue[v1],vvalue[v2],
+                             isoPoint);
+            VertexBuffer[vexAddress[i]] = isoPoint;
+        }
+    }
+}
+
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
     char fileName[]="/home/davidxu/bunny.points.ply";
@@ -2205,4 +2264,29 @@ int main() {
     thrust::inclusive_scan(triNums_ptr,triNums_ptr+NodeDNum,triAddress_ptr);
     cudaDeviceSynchronize();
 
+
+    // Step 4: generate vertices
+    int lastVexAddr;
+    int lastVexNums;
+    CHECK(cudaMemcpy(&lastVexAddr,vexAddress+EdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(&lastVexNums,vexNums+EdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+    int allVexNums = lastVexAddr + lastVexNums;
+    Point3D<float> *VertexBuffer=NULL;
+    nByte = sizeof(Point3D<float>) * allVexNums;
+    CHECK(cudaMalloc((Point3D<float>**)&VertexBuffer,nByte));
+//    CHECK(cudaMemset(VertexBuffer,0,nByte));
+
+    generateIntersectionPoint<<<grid,block>>>(EdgeArray,EdgeArray_sz,
+                                              VertexArray,NodeArray,
+                                              vexNums,vexAddress,vvalue,
+                                              VertexBuffer);
+    cudaDeviceSynchronize();
+
+
+    // Step 5: generate triangles
+    int lastTriAddr;
+    int lastTriNums;
+    CHECK(cudaMemcpy(&lastTriAddr,triAddress+NodeDNum-1,sizeof(int),cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(&lastTriNums,triNums+NodeDNum-1,sizeof(int),cudaMemcpyDeviceToHost));
+    int allTriNums = lastTriAddr+lastTriNums;
 }
