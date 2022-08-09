@@ -2835,3 +2835,74 @@ int PlyWriteTriangles(char* fileName,CoredMeshData* mesh,int file_type,const Poi
     ply_close(ply);
     return 1;
 }
+
+int PlyWriteTriangles(char* fileName,
+                      Point3D<float> *VertexBuffer_h,int allVexNums,
+                      int *TriangleBuffer_h, int allTriNums,
+                      int file_type,const Point3D<float>& translate,const float& scale,char** comments,const int& commentNum){
+    int i;
+    int nr_vertices=allVexNums;
+    int nr_faces=allTriNums;
+    float version;
+    PlyFile *ply = ply_open_for_writing(fileName, 2, elem_names, file_type, &version);
+    if (!ply){return 0;}
+
+
+    //
+    // describe vertex and face properties
+    //
+    ply_element_count(ply, "vertex", nr_vertices);
+    ply_describe_property(ply, "vertex", &vert_props[0]);
+    ply_describe_property(ply, "vertex", &vert_props[1]);
+    ply_describe_property(ply, "vertex", &vert_props[2]);
+
+    ply_element_count(ply, "face", nr_faces);
+    ply_describe_property(ply, "face", &face_props[0]);
+
+    // Write in the comments
+    for(i=0;i<commentNum;i++){ply_put_comment(ply,comments[i]);}
+
+    ply_header_complete(ply);
+
+    // write vertices
+    ply_put_element_setup(ply, "vertex");
+    Point3D<float> p;
+    for (i=0; i < allVexNums; i++){
+        PlyVertex ply_vertex;
+        p=VertexBuffer_h[i];
+        ply_vertex.x = p.coords[0]*scale+translate.coords[0];
+        ply_vertex.y = p.coords[1]*scale+translate.coords[1];
+        ply_vertex.z = p.coords[2]*scale+translate.coords[2];
+        ply_put_element(ply, (void *) &ply_vertex);
+    }
+//    for (i=0; i < mesh->outOfCorePointCount(); i++){
+//        PlyVertex ply_vertex;
+//        mesh->nextOutOfCorePoint(p);
+//        ply_vertex.x = p.coords[0]*scale+translate.coords[0];
+//        ply_vertex.y = p.coords[1]*scale+translate.coords[1];
+//        ply_vertex.z = p.coords[2]*scale+translate.coords[2];
+//        ply_put_element(ply, (void *) &ply_vertex);
+//    }  // for, write vertices
+
+    // write faces
+    TriangleIndex tIndex;
+    int inCoreFlag;
+    ply_put_element_setup(ply, "face");
+    for (i=0; i < nr_faces; i++){
+        //
+        // create and fill a struct that the ply code can handle
+        //
+        PlyFace ply_face;
+        ply_face.nr_vertices = 3;
+        ply_face.vertices = new int[3];
+        tIndex.idx[0] = TriangleBuffer_h[3*i];
+        tIndex.idx[0] = TriangleBuffer_h[3*i+1];
+        tIndex.idx[0] = TriangleBuffer_h[3*i+2];
+        for(int j=0; j < 3; j++){ply_face.vertices[j] = tIndex.idx[j];}
+        ply_put_element(ply, (void *) &ply_face);
+        delete[] ply_face.vertices;
+    }  // for, write faces
+
+    ply_close(ply);
+    return 1;
+}

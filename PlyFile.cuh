@@ -225,4 +225,7 @@ extern int equal_strings(char *, char *);
 int PlyWriteTriangles(char* fileName,CoredMeshData* mesh,int file_type,const Point3D<float>& translate,const float& scale,char** comments=NULL,const int& commentNum=0);
 int PlyDefaultFileType(void);
 
+
+int PlyWriteTriangles(char* fileName, Point3D<float> *VertexBuffer_h,int allVexNums, int *TriangleBuffer_h, int allTriNums, int file_type,const Point3D<float>& translate,const float& scale,char** comments,const int& commentNum);
+
 #endif // PLY_FILE_INCLUDED
