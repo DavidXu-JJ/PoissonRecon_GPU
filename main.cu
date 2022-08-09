@@ -477,7 +477,7 @@ __global__ void computeNeighbor(OctNode *NodeArray,int left,int right,int depthD
     }
 }
 
-__host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz,
+__host__ void pipelineBuildNodeArray(char *fileName,Point3D<float> &center,float &scale,int &count,int &NodeArray_sz,
                                      int NodeArrayCount_h[maxDepth_h+1],int BaseAddressArray_h[maxDepth_h+1], //host
                                      Point3D<float> *&samplePoints_d,Point3D<float> *&sampleNormals_d,int *&PointToNodeArrayD,OctNode *&NodeArray)    //device
 {
@@ -490,9 +490,8 @@ __host__ void pipelineBuildNodeArray(char *fileName,int &count,int &NodeArray_sz
 
     Point3D<float> position,normal;
     Point3D<float> mx,mn;
-    Point3D<float> center;
 
-    float scale=1;
+    scale=1;
     float scaleFactor=1.25;
 
     double st=cpuSecond();
@@ -1793,7 +1792,7 @@ __global__ void generateVexNums(EdgeNode *EdgeArray,int EdgeArray_sz,
 __global__ void generateTriNums(OctNode *NodeArray,
                                 int left,int right,
                                 float *vvalue,
-                                int *triNums)
+                                int *triNums,int *cubeCatagory)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -1801,13 +1800,14 @@ __global__ void generateTriNums(OctNode *NodeArray,
     offset+=left;
     for(int i=offset;i<right;i+=stride){
         OctNode nowNode=NodeArray[i];
-        int cubeCatagory=0;
+        int nowCubeCatagory=0;
         for(int j=0;j<8;++j){
             if(vvalue[nowNode.vertices[j]-1] < 0){
-                cubeCatagory |= 1<<j;
+                nowCubeCatagory |= 1<<j;
             }
         }
-        triNums[i-left]=trianglesCount[cubeCatagory];
+        triNums[i-left]=trianglesCount[nowCubeCatagory];
+        cubeCatagory[i-left]=nowCubeCatagory;
     }
 }
 
@@ -1870,6 +1870,40 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
     }
 }
 
+
+__global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
+                                    int *triNums,int *cubeCatagory,
+                                    int *vexAddress,Point3D<float> *VertexBuffer,
+                                    int *triAddress, Point3D<float> *TriangleBuffer)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        OctNode nowNode = NodeArray[i];
+        int depthDIdx = i-left;
+        int nowTriNum = triNums[depthDIdx];
+        int nowCubeCatagory = cubeCatagory[depthDIdx];
+        int nowTriangleBufferStart = 3 * triAddress[i];
+        for(int j=0;j<3*nowTriNum;j+=3){
+            int edgeIdx[3];
+            edgeIdx[0]=triangles[nowCubeCatagory][j];
+            edgeIdx[1]=triangles[nowCubeCatagory][j+1];
+            edgeIdx[2]=triangles[nowCubeCatagory][j+2];
+
+            int vertexIdx[3];
+            vertexIdx[0] = nowNode.vertices[edgeIdx[0]];
+            vertexIdx[1] = nowNode.vertices[edgeIdx[1]];
+            vertexIdx[2] = nowNode.vertices[edgeIdx[2]];
+
+            TriangleBuffer[ nowTriangleBufferStart + j ] = VertexBuffer[vexAddress[0]];
+            TriangleBuffer[ nowTriangleBufferStart + j + 1 ] = VertexBuffer[vexAddress[1]];
+            TriangleBuffer[ nowTriangleBufferStart + j + 2 ] = VertexBuffer[vexAddress[2]];
+        }
+    }
+}
+
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
     char fileName[]="/home/davidxu/bunny.points.ply";
@@ -1882,9 +1916,11 @@ int main() {
     OctNode *NodeArray;
     int count=0;
     int NodeArray_sz=0;
+    Point3D<float> center;
+    float scale;
 
     // the number of nodes at maxDepth is very large, some maintaining of their info is time-consuming
-    pipelineBuildNodeArray(fileName,count,NodeArray_sz,
+    pipelineBuildNodeArray(fileName,center,scale,count,NodeArray_sz,
                            NodeArrayCount_h,BaseAddressArray,
                            samplePoints_d,sampleNormals_d,PointToNodeArrayD,NodeArray );
 
@@ -2247,10 +2283,15 @@ int main() {
     CHECK(cudaMalloc((int**)&triNums,nByte));
     CHECK(cudaMemset(triNums,0,nByte));
 
+    int *cubeCatagory=NULL;
+//    nByte = sizeof(int) * NodeDNum;
+    CHECK(cudaMalloc((int**)&cubeCatagory,nByte));
+    CHECK(cudaMemset(cubeCatagory,0,nByte));
+
     generateTriNums<<<grid,block>>>(NodeArray,
                                     BaseAddressArray[maxDepth_h],NodeArray_sz,
                                     vvalue,
-                                    triNums);
+                                    triNums,cubeCatagory);
     cudaDeviceSynchronize();
 
     int *triAddress=NULL;
@@ -2289,4 +2330,21 @@ int main() {
     CHECK(cudaMemcpy(&lastTriAddr,triAddress+NodeDNum-1,sizeof(int),cudaMemcpyDeviceToHost));
     CHECK(cudaMemcpy(&lastTriNums,triNums+NodeDNum-1,sizeof(int),cudaMemcpyDeviceToHost));
     int allTriNums = lastTriAddr+lastTriNums;
+
+    Point3D<float> *TriangleBuffer=NULL;
+    nByte = sizeof(Point3D<float>) * 3 * allTriNums;
+    CHECK(cudaMalloc((Point3D<float>**)&TriangleBuffer,nByte));
+//    CHECK(cudaMemset(TriangleBuffer,0,nByte));
+
+    generateTrianglePos<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
+                                        triNums,cubeCatagory,
+                                        vexAddress,VertexBuffer,
+                                        triAddress,TriangleBuffer);
+    cudaDeviceSynchronize();
+
+
+//    nByte = sizeof(Point3D<float>) * 3 * allTriNums;
+    Point3D<float> *TriangleBuffer_h = (Point3D<float> *)malloc(nByte);
+    CHECK(cudaMemcpy(TriangleBuffer_h,TriangleBuffer,nByte,cudaMemcpyDeviceToHost));
+
 }
