@@ -27,11 +27,24 @@
 //! maybe cudaMemset and cudaMemcpy can be optimized into async function
 
 //#define FORCE_UNIT_NORMALS 1
-//template<class Real>
 __global__ void outputDeviceArray(Point3D<float> *d_addr,int size) {
     printf("print array:\n");
     for(int i=0;i<size;++i) {
         printf("%f %f %f\n",d_addr[i].coords[0],d_addr[i].coords[1],d_addr[i].coords[2]);
+    }
+}
+
+__global__ void outputDeviceArray(int *d_addr,int size) {
+    printf("print array:\n");
+    for(int i=0;i<size;++i) {
+        printf("%d\n",d_addr[i]);
+    }
+}
+
+__global__ void outputDeviceArray(float *d_addr,int size) {
+    printf("print array:\n");
+    for(int i=0;i<size;++i) {
+        printf("%f\n",d_addr[i]);
     }
 }
 
@@ -1012,7 +1025,10 @@ __global__ void computeFinerNodesDivergence(int *BaseAddressArray_d,int *NodeIdx
     }
 }
 
-__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int *EncodedNodeIdxInFunction, OctNode *NodeArray, int left, int right, Point3D<float> *VectorField, const double *dot_F_DF, float *Divergence) {
+__global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int *EncodedNodeIdxInFunction,
+                                                   OctNode *NodeArray, int left, int right,
+                                                   Point3D<float> *VectorField, const double *dot_F_F,const double *dot_F_DF,
+                                                   float *Divergence) {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1045,18 +1061,27 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int 
                 idxO_2[2]=encode_idx/decode_offset2;
 
                 int scratch[3];
-                scratch[0] = idxO_1[0] * res + idxO_2[0];
-                scratch[1] = idxO_1[1] * res + idxO_2[1];
-                scratch[2] = idxO_1[2] * res + idxO_2[2];
+//                scratch[0] = idxO_1[0] * res + idxO_2[0];
+//                scratch[1] = idxO_1[1] * res + idxO_2[1];
+//                scratch[2] = idxO_1[2] * res + idxO_2[2];
+                scratch[0] = idxO_1[0] + idxO_2[0] * res;
+                scratch[1] = idxO_1[1] + idxO_2[1] * res;
+                scratch[2] = idxO_1[2] + idxO_2[2] * res;
+
+                double dot[3];
+                dot[0]=dot_F_F[scratch[0]];
+                dot[1]=dot_F_F[scratch[1]];
+                dot[2]=dot_F_F[scratch[1]];
 
                 Point3D<float> uo;
-                uo.coords[0]=dot_F_DF[scratch[0]];
-                uo.coords[1]=dot_F_DF[scratch[1]];
-                uo.coords[2]=dot_F_DF[scratch[2]];
+                uo.coords[0]=dot_F_DF[scratch[0]] * dot[1] * dot[2];
+                uo.coords[1]=dot_F_DF[scratch[1]] * dot[0] * dot[2];
+                uo.coords[2]=dot_F_DF[scratch[2]] * dot[0] * dot[1];
                 val += DotProduct(vo,uo);
             }
         }
-        Divergence[i] += val;
+        Divergence[i] = val;
+//        printf("%d %f\n",i,val);
     }
 }
 
@@ -1097,7 +1122,7 @@ __global__ void generateDIdxArray(OctNode *NodeArray,int idx,int *coverNums,int 
 
 __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNums,int *BaseAddressArray_d,
                                                      int *NodeIdxInFunction,
-                                                     Point3D<float> *VectorField,const double *dot_F_DF,
+                                                     Point3D<float> *VectorField,const double *dot_F_F,const double *dot_F_DF,
                                                      int idx,float *divg){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -1125,15 +1150,24 @@ __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNum
         idxO_2[2]=encode_idx/decode_offset2;
 
         int scratch[3];
-        scratch[0] = idxO_1[0] * res + idxO_2[0];
-        scratch[1] = idxO_1[1] * res + idxO_2[1];
-        scratch[2] = idxO_1[2] * res + idxO_2[2];
+//        scratch[0] = idxO_1[0] * res + idxO_2[0];
+//        scratch[1] = idxO_1[1] * res + idxO_2[1];
+//        scratch[2] = idxO_1[2] * res + idxO_2[2];
+        scratch[0] = idxO_1[0] + idxO_2[0] * res;
+        scratch[1] = idxO_1[1] + idxO_2[1] * res;
+        scratch[2] = idxO_1[2] + idxO_2[2] * res;
+
+        double dot[3];
+        dot[0]=dot_F_F[scratch[0]];
+        dot[1]=dot_F_F[scratch[1]];
+        dot[2]=dot_F_F[scratch[1]];
 
         Point3D<float> uo;
-        uo.coords[0]=dot_F_DF[scratch[0]];
-        uo.coords[1]=dot_F_DF[scratch[1]];
-        uo.coords[2]=dot_F_DF[scratch[2]];
-        divg[i] += DotProduct(vo,uo);
+        uo.coords[0]=dot_F_DF[scratch[0]] * dot[1] * dot[2];
+        uo.coords[1]=dot_F_DF[scratch[1]] * dot[0] * dot[2];
+        uo.coords[2]=dot_F_DF[scratch[2]] * dot[0] * dot[1];
+
+        divg[i] = DotProduct(vo,uo);
     }
 }
 
@@ -1152,7 +1186,7 @@ __device__ double GetLaplacianEntry(double *&dot_F_DF,double *&dot_F_D2F,
     return Entry;
 }
 
-__global__ void GenerateSingleNodeLaplacian(double *dot_F_DF,double *dot_F_D2F,
+__global__ void GenerateSingleNodeLaplacian(double *dot_F_F,double *dot_F_D2F,
                                             int *EncodedNodeIdxInFunction,OctNode *NodeArray,
                                             int left,int right,
                                             int *rowCount,int *colIdx,float *val)
@@ -1196,7 +1230,7 @@ __global__ void GenerateSingleNodeLaplacian(double *dot_F_DF,double *dot_F_D2F,
             scratch[1] = idxO_1[1] * res + idxO_2[1];
             scratch[2] = idxO_1[2] * res + idxO_2[2];
 
-            double LaplacianEntryValue= GetLaplacianEntry(dot_F_DF,dot_F_D2F,scratch);
+            double LaplacianEntryValue= GetLaplacianEntry(dot_F_F,dot_F_D2F,scratch);
             if(LaplacianEntryValue > eps) {
                 colIdx[colStart + cnt] = colIndex;
                 val[colStart + cnt] = LaplacianEntryValue;
@@ -1218,7 +1252,7 @@ struct validEntry{
 __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h, const int& nowDepth,   //host
                                  int *EncodedNodeIdxInFunction, OctNode *NodeArray, float *Divergence,//device
                                  const int &NodeArray_sz,
-                                 double *dot_F_DF,double *dot_F_D2F,
+                                 double *dot_F_F,double *dot_F_D2F,
                                  float *&d_x)
 {
     float total_time=0.0f;
@@ -1248,7 +1282,7 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
         CHECK(cudaMallocManaged((float**)&val,nByte));
 //        CHECK(cudaMemset(val,0,nByte));
 
-        GenerateSingleNodeLaplacian<<<grid,block>>>(dot_F_DF,dot_F_D2F,
+        GenerateSingleNodeLaplacian<<<grid,block>>>(dot_F_F,dot_F_D2F,
                                                     EncodedNodeIdxInFunction,NodeArray,
                                                     BaseAddressArray_h[i],BaseAddressArray_h[i]+nowDepthNodesNum,
                                                     rowCount + 1,colIdx,val);
@@ -1300,7 +1334,7 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
 //        for(int j=0;j<valNums;++j){
 //            printf("matrix:%f\n",MergedVal[j]);
 //        }
-
+//
 //        for(int j=0;j<nowDepthNodesNum;++j){
 //            printf("V:%f\n",Divergence[BaseAddressArray_h[i]+j]);
 //        }
@@ -1370,6 +1404,8 @@ __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoint
 //                    printf("%f %f %f %f\n",d_x[neigh],value(funcX,samplePoint.coords[0]),
 //                           value(funcY,samplePoint.coords[1]),
 //                           value(funcZ,samplePoint.coords[2]));
+//                    printf("val:%f ",val);
+//                    printf("d_x:%f ",d_x[neigh]);
                 }
             }
             nowNode = NodeArray[nowNode].parent;
@@ -1951,12 +1987,12 @@ __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
 }
 
 int main() {
-    char fileName[]="/home/davidxu/horse.npts";
-    char outName[]="/home/davidxu/horse.ply";
+//    char fileName[]="/home/davidxu/horse.npts";
+//    char outName[]="/home/davidxu/horse.ply";
 
 
-//    char fileName[]="/home/davidxu/bunny.points.ply";
-//    char outName[]="/home/davidxu/bunny.ply";
+    char fileName[]="/home/davidxu/bunny.points.ply";
+    char outName[]="/home/davidxu/bunny.ply";
 
     int NodeArrayCount_h[maxDepth_h+1];
     int BaseAddressArray[maxDepth_h+1];
@@ -1998,6 +2034,7 @@ int main() {
 //        puts("");
 //    }
 
+    // ----------------------------------------------------
 
     double cpu_st=cpuSecond();
 
@@ -2019,13 +2056,19 @@ int main() {
     }
 
     int nByte=sizeof(double) * fData.res * fData.res;
+    double *dot_F_F=NULL;
+    CHECK(cudaMalloc((double **)&dot_F_F,nByte));
+    CHECK(cudaMemcpy(dot_F_F,fData.dotTable,nByte,cudaMemcpyHostToDevice));
+
     double *dot_F_DF=NULL;
     CHECK(cudaMalloc((double **)&dot_F_DF,nByte));
-    CHECK(cudaMemcpy(dot_F_DF,fData.dotTable,nByte,cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(dot_F_DF,fData.dDotTable,nByte,cudaMemcpyHostToDevice));
 
     double *dot_F_D2F=NULL;
     CHECK(cudaMalloc((double **)&dot_F_D2F,nByte));
     CHECK(cudaMemcpy(dot_F_D2F,fData.d2DotTable,nByte,cudaMemcpyHostToDevice));
+
+    fData.clearDotTables(fData.DOT_FLAG | fData.D_DOT_FLAG | fData.D2_DOT_FLAG);
 
     ConfirmedPPolynomial<3,4> baseFunctions_h[fData.res];
     for(int i=0;i<fData.res;++i){
@@ -2037,17 +2080,10 @@ int main() {
     CHECK(cudaMalloc((ConfirmedPPolynomial<3,4>**)&baseFunctions_d,nByte));
     CHECK(cudaMemcpy(baseFunctions_d,baseFunctions_h,nByte,cudaMemcpyHostToDevice));
 
-//    for(int i=0;i<4;++i){
-//        for(int j=0;j<=3;++j){
-//            printf("%f ",baseFunctions_h[200].polys[i].p.coefficients[j]);
-//        }
-//        puts("");
-//    }
-
-
     double cpu_ed=cpuSecond();
     printf("CPU generate precomputed inner product table takes:%lfs\n",cpu_ed-cpu_st);
 
+    // ----------------------------------------------------
 
     ConfirmedPPolynomial<2,4> BaseFunctionMaxDepth(ReconstructionFunction.scale(1.0/(1<<maxDepth_h)));
     nByte=sizeof(BaseFunctionMaxDepth);
@@ -2069,8 +2105,13 @@ int main() {
                                        NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,VectorField);
     cudaDeviceSynchronize();
 
+//    outputDeviceArray<<<1,1>>>(VectorField,200);
+//    cudaDeviceSynchronize();
+
     double mid1=cpuSecond();
     printf("Compute Vector Field takes:%lfs\n",mid1-st);
+
+    // ----------------------------------------------------
 
     float *Divergence=NULL;
     nByte=sizeof(float) * NodeArray_sz;
@@ -2088,10 +2129,10 @@ int main() {
     printf("Precompute Function index of node takes:%lfs\n",mid2-mid1);
 
     // memory access is very slow, maybe optimize it by setting faster memory.
+    printf("left:%d,right:%d\n",BaseAddressArray[5],NodeArray_sz);
     computeEncodedFinerNodesDivergence<<<grid,block>>>(BaseAddressArray_d, EncodedNodeIdxInFunction,
                                                        NodeArray, BaseAddressArray[5],BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h],
-                                                       VectorField,
-                                                       dot_F_DF,
+                                                       VectorField, dot_F_DF,dot_F_DF,
                                                        Divergence);
     cudaDeviceSynchronize();
 
@@ -2104,6 +2145,7 @@ int main() {
     double mid3=cpuSecond();
     printf("Compute finer depth nodes' divergence takes:%lfs\n",mid3-mid2);
 
+    // ----------------------------------------------------
 
     // maybe can be optimized by running all nodes at the same time.
 //    nByte=sizeof(float) * NodeDNum;
@@ -2119,7 +2161,7 @@ int main() {
 
             float *divg=NULL;
             nByte=sizeof(float)*coverNums_h[27];
-            CHECK(cudaMalloc((float**)&divg,nByte));
+            CHECK(cudaMallocManaged((float**)&divg,nByte));
             CHECK(cudaMemset(divg,0,nByte));
 
             int *DIdxArray=NULL;
@@ -2132,7 +2174,7 @@ int main() {
 
             computeEncodedCoarserNodesDivergence<<<grid,block>>>(DIdxArray, coverNums_h[27], BaseAddressArray_d,
                                                                  EncodedNodeIdxInFunction,
-                                                                 VectorField, dot_F_DF,
+                                                                 VectorField, dot_F_F,dot_F_DF,
                                                                  j, divg);
             cudaDeviceSynchronize();
             thrust::device_ptr<float> divg_ptr=thrust::device_pointer_cast<float>(divg);
@@ -2150,18 +2192,21 @@ int main() {
     double mid4=cpuSecond();
     printf("Compute coarser depth nodes' divergence takes:%lfs\n",mid4-mid3);
 
+    // ----------------------------------------------------
 
     // d_x is the Solution
     float *d_x=NULL;
     LaplacianIteration(BaseAddressArray,NodeArrayCount_h,4,
                        EncodedNodeIdxInFunction,NodeArray,Divergence,
                        NodeArray_sz,
-                       dot_F_DF,dot_F_D2F,
+                       dot_F_F,dot_F_D2F,
                        d_x);
     cudaFree(Divergence);
 
     double mid5=cpuSecond();
     printf("GPU Laplacian Iteration takes:%lfs\n",mid5-mid4);
+
+    // ----------------------------------------------------
 
     float *pointValue=NULL;
     nByte=sizeof(float)*count;
@@ -2170,7 +2215,7 @@ int main() {
 
     grid=32;
     block=(32,32);
-    calculatePointsImplicitFunctionValue<<<grid,block>>>(samplePoints_d,PointToNodeArrayD,count,BaseAddressArray[maxDepth_h],
+    calculatePointsImplicitFunctionValue<<<grid,grid>>>(samplePoints_d,PointToNodeArrayD,count,BaseAddressArray[maxDepth_h],
                                                          NodeArray,d_x,
                                                          EncodedNodeIdxInFunction,baseFunctions_d,
                                                          pointValue);
@@ -2183,6 +2228,8 @@ int main() {
 
     double mid6 = cpuSecond();
     printf("isoValue:%f\nGPU calculate isoValue takes:%lfs\n",isoValue,mid6-mid5);
+
+    // ----------------------------------------------------
 
     // pre-compute the center of node ?
 
@@ -2263,7 +2310,7 @@ int main() {
     double mid8=cpuSecond();
     printf("EdgeArray_sz:%d\nGPU build EdgeArray takes:%lfs\n",EdgeArray_sz,mid8-mid7);
 
-    // ------------------------------
+    // ----------------------------------------------------
 
     // Step 1: compute implicit function values for octree vertices
     float *vvalue = NULL;
