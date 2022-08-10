@@ -24,6 +24,8 @@
 #include "CG_CUDA.cuh"
 #include "MarchingCubes.cuh"
 
+#define TIMES_DOT_TABLE 1
+
 //! maybe cudaMemset and cudaMemcpy can be optimized into async function
 
 //#define FORCE_UNIT_NORMALS 1
@@ -1068,15 +1070,21 @@ __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int 
                 scratch[1] = idxO_1[1] + idxO_2[1] * res;
                 scratch[2] = idxO_1[2] + idxO_2[2] * res;
 
+                Point3D<float> uo;
+#ifdef TIMES_DOT_TABLE
                 double dot[3];
                 dot[0]=dot_F_F[scratch[0]];
                 dot[1]=dot_F_F[scratch[1]];
                 dot[2]=dot_F_F[scratch[1]];
 
-                Point3D<float> uo;
                 uo.coords[0]=dot_F_DF[scratch[0]] * dot[1] * dot[2];
                 uo.coords[1]=dot_F_DF[scratch[1]] * dot[0] * dot[2];
                 uo.coords[2]=dot_F_DF[scratch[2]] * dot[0] * dot[1];
+#elif
+                uo.coords[0]=dot_F_DF[scratch[0]];
+                uo.coords[1]=dot_F_DF[scratch[1]];
+                uo.coords[2]=dot_F_DF[scratch[2]];
+#endif
                 val += DotProduct(vo,uo);
             }
         }
@@ -1157,15 +1165,21 @@ __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNum
         scratch[1] = idxO_1[1] + idxO_2[1] * res;
         scratch[2] = idxO_1[2] + idxO_2[2] * res;
 
+        Point3D<float> uo;
+#ifdef TIMES_DOT_TABLE
         double dot[3];
         dot[0]=dot_F_F[scratch[0]];
         dot[1]=dot_F_F[scratch[1]];
         dot[2]=dot_F_F[scratch[1]];
 
-        Point3D<float> uo;
         uo.coords[0]=dot_F_DF[scratch[0]] * dot[1] * dot[2];
         uo.coords[1]=dot_F_DF[scratch[1]] * dot[0] * dot[2];
         uo.coords[2]=dot_F_DF[scratch[2]] * dot[0] * dot[1];
+#elif
+        uo.coords[0]=dot_F_DF[scratch[0]];
+        uo.coords[1]=dot_F_DF[scratch[1]];
+        uo.coords[2]=dot_F_DF[scratch[2]];
+#endif
 
         divg[i] = DotProduct(vo,uo);
     }
