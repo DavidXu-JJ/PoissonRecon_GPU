@@ -2896,8 +2896,8 @@ int PlyWriteTriangles(char* fileName,
         ply_face.nr_vertices = 3;
         ply_face.vertices = new int[3];
         tIndex.idx[0] = TriangleBuffer_h[3*i];
-        tIndex.idx[0] = TriangleBuffer_h[3*i+1];
-        tIndex.idx[0] = TriangleBuffer_h[3*i+2];
+        tIndex.idx[1] = TriangleBuffer_h[3*i+1];
+        tIndex.idx[2] = TriangleBuffer_h[3*i+2];
         for(int j=0; j < 3; j++){ply_face.vertices[j] = tIndex.idx[j];}
         ply_put_element(ply, (void *) &ply_face);
         delete[] ply_face.vertices;

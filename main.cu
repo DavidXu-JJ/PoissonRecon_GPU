@@ -27,11 +27,11 @@
 //! maybe cudaMemset and cudaMemcpy can be optimized into async function
 
 //#define FORCE_UNIT_NORMALS 1
-template<class Real>
-__global__ void outputDeviceArray(Real *d_addr,int size) {
+//template<class Real>
+__global__ void outputDeviceArray(Point3D<float> *d_addr,int size) {
     printf("print array:\n");
     for(int i=0;i<size;++i) {
-        printf("%d\n",d_addr[i]);
+        printf("%f %f %f\n",d_addr[i].coords[0],d_addr[i].coords[1],d_addr[i].coords[2]);
     }
 }
 
@@ -62,7 +62,7 @@ __constant__ int LUTchild[8][27]={
         {5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5},
         {4,5,4,6,7,6,4,5,4,0,1,0,2,3,2,0,1,0,4,5,4,6,7,6,4,5,4},
         {3,2,3,1,0,1,3,2,3,7,6,7,5,4,5,7,6,7,3,2,3,1,0,1,3,2,3},
-        {2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6,6,7,2,0,1,0,2,3,2},
+        {2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6,2,3,2,0,1,0,2,3,2},
         {1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1},
         {0,1,0,2,3,2,0,1,0,4,5,4,6,7,6,4,5,4,0,1,0,2,3,2,0,1,0}
 };
@@ -87,7 +87,7 @@ int LUTchild_h[8][27]={
         {5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5},
         {4,5,4,6,7,6,4,5,4,0,1,0,2,3,2,0,1,0,4,5,4,6,7,6,4,5,4},
         {3,2,3,1,0,1,3,2,3,7,6,7,5,4,5,7,6,7,3,2,3,1,0,1,3,2,3},
-        {2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6,6,7,2,0,1,0,2,3,2},
+        {2,3,2,0,1,0,2,3,2,6,7,6,4,5,4,6,7,6,2,3,2,0,1,0,2,3,2},
         {1,0,1,3,2,3,1,0,1,5,4,5,7,6,7,5,4,5,1,0,1,3,2,3,1,0,1},
         {0,1,0,2,3,2,0,1,0,4,5,4,6,7,6,4,5,4,0,1,0,2,3,2,0,1,0}
 };
@@ -1379,7 +1379,7 @@ __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoint
     }
 }
 
-__device__ void getNodeCenter(const int &key,Point3D<float> &myCenter){
+__host__ __device__ void getNodeCenter(const int &key,Point3D<float> &myCenter){
     myCenter.coords[0]=float(0.5);
     myCenter.coords[1]=float(0.5);
     myCenter.coords[2]=float(0.5);
@@ -1412,14 +1412,24 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
     for(int i=offset;i<right;i+=stride){
         Point3D<float> neighCenter[27];
         int neigh[27];
+//        int empty=0;
 #pragma unroll
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[i].neighs[k];
             if(neigh[k] != -1){
                 getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
             }
+//            else empty++;
         }
         const Point3D<float> &nodeCenter = neighCenter[13];
+
+//        if(!empty){
+//            printf("children[%d]:\n",NodeArray[i].key&7);
+//            for(int k=0;k<27;++k){
+//                printf("distance[%d]:%f\n",k,SquareDistance(nodeCenter,neighCenter[k])/Widthsq);
+//            }
+//        }
+
         Point3D<float> vertexPos[8];
 #pragma unroll
         for(int j=0;j<8;++j) {
@@ -1453,6 +1463,11 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
                 preVertexArray[vertexIdx].pos.coords[0] = vertexPos[j].coords[0] ;
                 preVertexArray[vertexIdx].pos.coords[1] = vertexPos[j].coords[1] ;
                 preVertexArray[vertexIdx].pos.coords[2] = vertexPos[j].coords[2] ;
+//                if(abs(vertexPos[j].coords[0])<EPSILON ||
+//                   abs(vertexPos[j].coords[1])<EPSILON ||
+//                   abs(vertexPos[j].coords[2])<EPSILON)
+//                    printf("error\n");
+//                printf("vertexPos:%f %f %f\n",vertexPos[j].coords[0],vertexPos[j].coords[1],vertexPos[j].coords[2]);
             }
         }
     }
@@ -1510,6 +1525,12 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
         int owner=VertexArray[i].ownerNodeIdx;
         Point3D<float> neighCenter[27];
         Point3D<float> vertexPos=VertexArray[i].pos;
+
+//        if(abs(vertexPos.coords[0])<EPSILON ||
+//           abs(vertexPos.coords[1])<EPSILON ||
+//           abs(vertexPos.coords[2])<EPSILON)
+//            printf("error\n");
+
         int neigh[27];
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[owner].neighs[k];
@@ -1524,8 +1545,14 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
                 ++cnt;
                 int idx=0;
                 if(neighCenter[k].coords[0]-vertexPos.coords[0] < 0) idx|=1;
-                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) idx|=2;
                 if(neighCenter[k].coords[2]-vertexPos.coords[2] < 0) idx|=4;
+                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) {
+                    if(idx & 1){
+                        idx+=1;
+                    }else{
+                        idx+=3;
+                    }
+                }
                 NodeArray[neigh[k]].vertices[idx] = i+1;
             }
         }
@@ -1745,7 +1772,16 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
 }
 
 __device__ int VertexIndex(const int &x,const int &y,const int &z){
-    return (z<<2)|(y<<1)|x;
+    int ret = x | (z<<2);
+    if(y==1){
+        if(ret & 1){
+            ++ret;
+        }else{
+            ret+=3;
+        }
+    }
+    return ret;
+//    return (z<<2)|(y<<1)|x;
 }
 
 __global__ void generateVexNums(EdgeNode *EdgeArray,int EdgeArray_sz,
@@ -1859,12 +1895,19 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
                     printf("error\n");
             }
             OctNode ownerNode=NodeArray[owner];
+//            printf("%d %d %d\n",owner,idx[0],idx[1]);
             int v1=ownerNode.vertices[idx[0]]-1;
             int v2=ownerNode.vertices[idx[1]]-1;
             Point3D<float> isoPoint;
             interpolatePoint(VertexArray[v1].pos,VertexArray[v2].pos,
                              orientation,vvalue[v1],vvalue[v2],
                              isoPoint);
+//            if(v1<0 || v2<0){
+//                printf("error\n");
+//            }
+//            printf("v1:%f %f %f\n",VertexArray[v1].pos.coords[0],VertexArray[v1].pos.coords[1],VertexArray[v1].pos.coords[2]);
+//            printf("v2:%f %f %f\n",VertexArray[v2].pos.coords[0],VertexArray[v2].pos.coords[1],VertexArray[v2].pos.coords[2]);
+//            printf("%f %f %f\n",isoPoint.coords[0],isoPoint.coords[1],isoPoint.coords[2]);
             VertexBuffer[vexAddress[i]] = isoPoint;
         }
     }
@@ -1873,7 +1916,7 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
 
 __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
                                     int *triNums,int *cubeCatagory,
-                                    int *vexAddress,Point3D<float> *VertexBuffer,
+                                    int *vexAddress,
                                     int *triAddress, int *TriangleBuffer)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -1885,32 +1928,35 @@ __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
         int depthDIdx = i-left;
         int nowTriNum = triNums[depthDIdx];
         int nowCubeCatagory = cubeCatagory[depthDIdx];
-        int nowTriangleBufferStart = 3 * triAddress[i];
+        int nowTriangleBufferStart = 3 * triAddress[depthDIdx];
         for(int j=0;j<3*nowTriNum;j+=3){
             int edgeIdx[3];
             edgeIdx[0]=triangles[nowCubeCatagory][j];
             edgeIdx[1]=triangles[nowCubeCatagory][j+1];
             edgeIdx[2]=triangles[nowCubeCatagory][j+2];
 
+//            printf("Catagory:%d\n",nowCubeCatagory);
+//            printf("edgeIdx:%d %d %d\n",edgeIdx[0],edgeIdx[1],edgeIdx[2]);
             int vertexIdx[3];
-            vertexIdx[0] = nowNode.vertices[edgeIdx[0]];
-            vertexIdx[1] = nowNode.vertices[edgeIdx[1]];
-            vertexIdx[2] = nowNode.vertices[edgeIdx[2]];
+            vertexIdx[0] = vexAddress[nowNode.edges[edgeIdx[0]] - 1];
+            vertexIdx[1] = vexAddress[nowNode.edges[edgeIdx[1]] - 1];
+            vertexIdx[2] = vexAddress[nowNode.edges[edgeIdx[2]] - 1];
+//            printf("vertexIdx:%d %d %d\n",vertexIdx[0],vertexIdx[1],vertexIdx[2]);
 
-            TriangleBuffer[ nowTriangleBufferStart + j ] = vexAddress[0];
-            TriangleBuffer[ nowTriangleBufferStart + j + 1 ] = vexAddress[1];
-            TriangleBuffer[ nowTriangleBufferStart + j + 2 ] = vexAddress[2];
+            TriangleBuffer[ nowTriangleBufferStart + j ] = vertexIdx[0];
+            TriangleBuffer[ nowTriangleBufferStart + j + 1 ] = vertexIdx[1];
+            TriangleBuffer[ nowTriangleBufferStart + j + 2 ] = vertexIdx[2];
         }
     }
 }
 
 int main() {
-//    char fileName[]="/home/davidxu/horse.npts";
-//    char outName[]="/home/davidxu/horse.ply";
+    char fileName[]="/home/davidxu/horse.npts";
+    char outName[]="/home/davidxu/horse.ply";
 
 
-    char fileName[]="/home/davidxu/bunny.points.ply";
-    char outName[]="/home/davidxu/bunny.ply";
+//    char fileName[]="/home/davidxu/bunny.points.ply";
+//    char outName[]="/home/davidxu/bunny.ply";
 
     int NodeArrayCount_h[maxDepth_h+1];
     int BaseAddressArray[maxDepth_h+1];
@@ -2168,7 +2214,7 @@ int main() {
 //    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
 //    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
 //        int all=0;
-//        for (int i = BaseAddressArray[j]; i < BaseAddressArray[j]+10; ++i) {
+//        for (int i = BaseAddressArray[j]; i < BaseAddressArray[j]+100; ++i) {
 ////            if(a[i].pnum==0) continue;
 //            all+=a[i].dnum;
 //            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
@@ -2214,38 +2260,10 @@ int main() {
     maintainEdgeNodePointer<<<grid,block>>>(EdgeArray,EdgeArray_sz,NodeArray);
     cudaDeviceSynchronize();
 
-//    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
-//    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
-//    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
-//        int all=0;
-//        for (int i = BaseAddressArray[j]; i < BaseAddressArray[j]+10; ++i) {
-////            if(a[i].pnum==0) continue;
-//            all+=a[i].dnum;
-//            std::cout << i << " " <<std::bitset<32>(a[i].key) << " pidx:" << a[i].pidx << " pnum:" << a[i].pnum << " parent:"
-//                      << a[i].parent << " didx:"<< a[i].didx << " dnum:" << a[i].dnum << std::endl;
-//            for(int k=0;k<8;++k){
-//                printf("children[%d]:%d ",k,a[i].children[k]);
-//            }
-//            puts("");
-//            for(int k=0;k<27;++k){
-//                printf("neigh[%d]:%d ",k,a[i].neighs[k]);
-//            }
-//            puts("");
-//            for(int k=0;k<8;++k){
-//                printf("vertices[%d]:%d ",k,a[i].vertices[k]);
-//            }
-//            puts("");
-//            for(int k=0;k<12;++k){
-//                printf("edges[%d]:%d ",k,a[i].edges[k]);
-//            }
-//            puts("");
-//        }
-//        printf("allD:%d\n",all);
-//        std::cout<<std::endl;
-//    }
-
     double mid8=cpuSecond();
     printf("EdgeArray_sz:%d\nGPU build EdgeArray takes:%lfs\n",EdgeArray_sz,mid8-mid7);
+
+    // ------------------------------
 
     // Step 1: compute implicit function values for octree vertices
     float *vvalue = NULL;
@@ -2278,7 +2296,7 @@ int main() {
     thrust::device_ptr<int> vexNums_ptr=thrust::device_pointer_cast<int>(vexNums);
     thrust::device_ptr<int> vexAddress_ptr=thrust::device_pointer_cast<int>(vexAddress);
 
-    thrust::inclusive_scan(vexNums_ptr,vexNums_ptr+EdgeArray_sz,vexAddress_ptr);
+    thrust::exclusive_scan(vexNums_ptr,vexNums_ptr+EdgeArray_sz,vexAddress_ptr);
     cudaDeviceSynchronize();
 
     // Step 3: compute triangle number and address
@@ -2306,7 +2324,7 @@ int main() {
     thrust::device_ptr<int> triNums_ptr=thrust::device_pointer_cast<int>(triNums);
     thrust::device_ptr<int> triAddress_ptr=thrust::device_pointer_cast<int>(triAddress);
 
-    thrust::inclusive_scan(triNums_ptr,triNums_ptr+NodeDNum,triAddress_ptr);
+    thrust::exclusive_scan(triNums_ptr,triNums_ptr+NodeDNum,triAddress_ptr);
     cudaDeviceSynchronize();
 
 
@@ -2318,7 +2336,7 @@ int main() {
     int allVexNums = lastVexAddr + lastVexNums;
     Point3D<float> *VertexBuffer=NULL;
     nByte = sizeof(Point3D<float>) * allVexNums;
-    CHECK(cudaMalloc((Point3D<float>**)&VertexBuffer,nByte));
+    CHECK(cudaMallocManaged((Point3D<float>**)&VertexBuffer,nByte));
 //    CHECK(cudaMemset(VertexBuffer,0,nByte));
 
     generateIntersectionPoint<<<grid,block>>>(EdgeArray,EdgeArray_sz,
@@ -2337,25 +2355,54 @@ int main() {
 
     int *TriangleBuffer=NULL;
     nByte = sizeof(int) * 3 * allTriNums;
-    CHECK(cudaMalloc((int**)&TriangleBuffer,nByte));
+    CHECK(cudaMallocManaged((int**)&TriangleBuffer,nByte));
 //    CHECK(cudaMemset(TriangleBuffer,0,nByte));
 
-    generateTrianglePos<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
+    generateTrianglePos<<<1,1>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
                                         triNums,cubeCatagory,
-                                        vexAddress,VertexBuffer,
+                                        vexAddress,
                                         triAddress,TriangleBuffer);
     cudaDeviceSynchronize();
 
 
 //    nByte = sizeof(int) * 3 * allTriNums;
-    int *TriangleBuffer_h = (int *)malloc(nByte);
-    CHECK(cudaMemcpy(TriangleBuffer_h,TriangleBuffer,nByte,cudaMemcpyDeviceToHost));
 
-    nByte = sizeof(Point3D<float>) * allVexNums;
-    Point3D<float> *VertexBuffer_h = (Point3D<float> *)malloc(nByte);
-    CHECK(cudaMemcpy(VertexBuffer_h,VertexArray,nByte,cudaMemcpyDeviceToHost));
+//    int *TriangleBuffer_h = (int *)malloc(nByte);
+//    CHECK(cudaMemcpy(TriangleBuffer_h,TriangleBuffer,nByte,cudaMemcpyDeviceToHost));
+//
+//    nByte = sizeof(Point3D<float>) * allVexNums;
+//    Point3D<float> *VertexBuffer_h = (Point3D<float> *)malloc(nByte);
+//    CHECK(cudaMemcpy(VertexBuffer_h,VertexBuffer,nByte,cudaMemcpyDeviceToHost));
 
-    PlyWriteTriangles(outName,VertexBuffer_h,allVexNums,
-                      TriangleBuffer_h,allTriNums,
-                      PLY_BINARY_NATIVE,center,scale,NULL,0);
+
+//    PlyWriteTriangles(outName,VertexBuffer,allVexNums,
+//                      TriangleBuffer,allTriNums,
+//                      PLY_BINARY_NATIVE,center,scale,NULL,0);
+    CoredVectorMeshData mesh;
+    float mn=999,mx=-999;
+    for(int i=0;i<allVexNums;++i){
+        if(abs(VertexBuffer[i].coords[0])<EPSILON)
+            printf("error\n");
+        mesh.inCorePoints.push_back(VertexBuffer[i]);
+        for(int j=0;j<3;++j){
+            mn=std::min(mn,mesh.inCorePoints[i].coords[j]);
+            mx=std::max(mx,mesh.inCorePoints[i].coords[j]);
+        }
+    }
+    printf("min:%f, max:%f\n",mn,mx);
+    int inCoreFlag=0;
+    for(int i=0;i<3;++i){
+        inCoreFlag|=CoredMeshData::IN_CORE_FLAG[i];
+    }
+    for(int i=0;i<allTriNums;++i){
+        TriangleIndex tri;
+        for(int j=0;j<3;++j) {
+            tri.idx[j] = TriangleBuffer[3*i+j];
+            if(tri.idx[j]<0 || tri.idx[j]>=allVexNums){
+                printf("tri error\n");
+            }
+        }
+        mesh.addTriangle(tri,inCoreFlag);
+    }
+    PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
 }
