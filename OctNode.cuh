@@ -17,16 +17,19 @@ public:
     // the first node at maxDepth is index 0
     int didx;
     int dnum;
+
     // (real idx) + 1,
     // idx start from (0 + 1)
     // encode the vertices idx?
     int vertices[8];
+
     // (real idx) + 1,
     // idx start from (0 + 1)
     int edges[12];
+
     // (real idx) + 1
     // idx start from (0 + 1)
-    int face[6];
+//    int face[6];
 };
 
 class VertexNode{

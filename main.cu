@@ -59,6 +59,8 @@ __global__ void outputDeviceArray(float *d_addr,int size) {
 //__constant__ int resolution=1023;
 #define resolution 1023
 
+#define stackCapacity 2000
+
 __constant__ int LUTparent[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
         {1,1,2,4,4,5,4,4,5,10,10,11,13,13,14,13,13,14,10,10,11,13,13,14,13,13,14},
@@ -797,7 +799,7 @@ __host__ void pipelineBuildNodeArray(char *fileName,Point3D<float> &center,float
 
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
 //    cudaMemcpy(a,NodeArray,sizeof(OctNode)*(BaseAddressArray_h[maxDepth_h]+NodeArrayCount_h[maxDepth_h]),cudaMemcpyDeviceToHost);
-//    for(int j=maxDepth_h;j<=maxDepth_h;++j) {
+//    for(int j=0;j<=2;++j) {
 //        int all=0;
 //        for (int i = BaseAddressArray_h[j]; i < BaseAddressArray_h[j]+10; ++i) {
 ////            if(a[i].pnum==0) continue;
@@ -1736,6 +1738,34 @@ struct validEdge{
     }
 };
 
+__device__ void pushStack(int *stack,int &top,const int &val){
+    if( top == stackCapacity){
+        printf("Stack full, error\n");
+//        for(int i=stackCapacity-10;i<stackCapacity;++i){
+//            printf("%d\n",stack[i]);
+//        }
+    }else{
+        stack[top]=val;
+        ++top;
+    }
+}
+
+__device__ int popStack(int *stack,int &top){
+    if(top==0){
+        printf("Stack empty,error.\n");
+    }
+    --top;
+    return stack[top];
+}
+
+__device__ int findStack(int *stack,int &top,const int &val){
+    for(int i=0;i<top;++i){
+        if(stack[i]==val)
+            return 1;
+    }
+    return 0;
+}
+
 __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int VertexArray_sz,
                                                    OctNode *NodeArray,float *d_x,
                                                    int *EncodedNodeIdxInFunction,ConfirmedPPolynomial<3,4> *baseFunctions_d,
@@ -1749,8 +1779,56 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
     int decode_offset1=(1<<(maxD+1));
     int decode_offset2=(1<<(2*(maxD+1)));
     for(int i=offset;i<VertexArray_sz;i+=stride){
-        VertexNode nowVertex=VertexArray[i];
+        VertexNode nowVertex = VertexArray[i];
+//        Point3D<float> vertexPos = nowVertex.pos;
         float val=0.0f;
+        int stack[stackCapacity];
+        int top=0;
+//        pushStack(stack,top,0);
+//        int nowNode;
+//        int nowDepth;
+//        float nowRadius;
+//        Point3D<float> nowCenter;
+//        int nowOverlap;
+//        while(top){
+//            nowNode = popStack(stack,top);
+//            nowCenter = CenterBuffer[nowNode];
+//            nowDepth = DepthBuffer[nowNode];
+//            nowRadius = 1.5f/(1<<(nowDepth+1));
+////            if(top >1022)
+////                printf("error:%d\n",i);
+////                printf("%d,%d %d\n",top,nowNode,nowDepth);
+//            nowOverlap=1;
+//            for(int t=0;t<3;++t){
+//                if(abs(vertexPos.coords[t]-nowCenter.coords[t]) > nowRadius){
+//                    nowOverlap=0;
+//                    break;
+//                }
+//            }
+//            if(nowOverlap){
+//                int idxO[3];
+//                int encode_idx=EncodedNodeIdxInFunction[nowNode];
+//                idxO[0]=encode_idx%decode_offset1;
+//                idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+//                idxO[2]=encode_idx/decode_offset2;
+//
+//                ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
+//                ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
+//                ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
+//
+//                val += d_x[nowNode] * value(funcX,vertexPos.coords[0])
+//                       * value(funcY,vertexPos.coords[1])
+//                       * value(funcZ,vertexPos.coords[2]);
+//                for(int j=0;j<8;++j){
+//                    int child = NodeArray[nowNode].children[j];
+//                    if(child !=-1) {
+////                        printf("parent:%d ,children:%d\n",nowNode,child);
+//                        pushStack(stack, top, child);
+////                        printf("top:%d\n",top);
+//                    }
+//                }
+//            }
+//        }
 //        for(int j=0;j<8;++j){
 //            int nowNode=nowVertex.nodes[j];
             int nowNode = nowVertex.ownerNodeIdx;
@@ -1759,6 +1837,11 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
                     for(int k=0;k<27;++k){
                         int neigh = NodeArray[nowNode].neighs[k];
                         if(neigh != -1){
+
+//                            if(findStack(stack,top,neigh)){
+//                                continue;
+//                            }
+
                             int idxO[3];
                             int encode_idx=EncodedNodeIdxInFunction[neigh];
                             idxO[0]=encode_idx%decode_offset1;
@@ -1772,6 +1855,8 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
                             val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
                                               * value(funcY,nowVertex.pos.coords[1])
                                               * value(funcZ,nowVertex.pos.coords[2]);
+
+//                            pushStack(stack,top,neigh);
                         }
                     }
                     nowNode = NodeArray[nowNode].parent;
