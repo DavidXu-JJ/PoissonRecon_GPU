@@ -2338,7 +2338,7 @@ int main() {
     CHECK(cudaMallocManaged((int**)&TriangleBuffer,nByte));
 //    CHECK(cudaMemset(TriangleBuffer,0,nByte));
 
-    generateTrianglePos<<<1,1>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
+    generateTrianglePos<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
                                         triNums,cubeCatagory,
                                         vexAddress,
                                         triAddress,TriangleBuffer);
