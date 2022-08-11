@@ -1306,17 +1306,13 @@ __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoint
     int decode_offset1=(1<<(maxD+1));
     int decode_offset2=(1<<(2*(maxD+1)));
     for(int i=offset;i<count;i+=stride){
-//    for(int i=offset;i<1;i+=stride){
         int leaveNodeIdx = start_D + PointToNodeArrayD[i];
         int nowNode = leaveNodeIdx;
         float val=0.0f;
         Point3D<float> samplePoint=samplePoints_d[i];
-//        printf("point: %f %f %f\n",samplePoint.coords[0],samplePoint.coords[1],samplePoint.coords[2]);
         while(nowNode != -1){
-//            printf("nowNode:%d\n",nowNode);
             for(int j=0;j<27;++j){
                 int neigh = NodeArray[nowNode].neighs[j];
-//                printf("neigh:%d\n",neigh);
                 if(neigh != -1){
 
                     int idxO[3];
@@ -1324,12 +1320,10 @@ __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoint
                     idxO[0]=encode_idx%decode_offset1;
                     idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
                     idxO[2]=encode_idx/decode_offset2;
-//                    printf("idxO assign ok\n");
 
                     ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
                     ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
                     ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
-//                    printf("func assign ok\n");
 
                     val += d_x[neigh] * value(funcX,samplePoint.coords[0])
                                       * value(funcY,samplePoint.coords[1])
@@ -1709,8 +1703,9 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
     for(int i=offset;i<VertexArray_sz;i+=stride){
         VertexNode nowVertex=VertexArray[i];
         float val=0.0f;
-        for(int j=0;j<8;++j){
-            int nowNode=nowVertex.nodes[j];
+//        for(int j=0;j<8;++j){
+//            int nowNode=nowVertex.nodes[j];
+            int nowNode = nowVertex.ownerNodeIdx;
             if(nowNode>0){
                 while(nowNode != -1){
                     for(int k=0;k<27;++k){
@@ -1734,7 +1729,7 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
                     nowNode = NodeArray[nowNode].parent;
                 }
             }else break;
-        }
+//        }
         vvalue[i]=val-isoValue;
     }
 //    printf("thread finish\n");
@@ -1816,8 +1811,8 @@ __global__ void generateTriNums(OctNode *NodeArray,
     }
 }
 
-__device__ void interpolatePoint(Point3D<float> p1,Point3D<float> p2,
-                                 const int &dim,float v1,float v2,
+__device__ void interpolatePoint(const Point3D<float> &p1,const Point3D<float> &p2,
+                                 const int &dim,const float &v1,const float &v2,
                                  Point3D<float> & out)
 {
     for(int i=0;i<3;++i){
@@ -1826,7 +1821,9 @@ __device__ void interpolatePoint(Point3D<float> p1,Point3D<float> p2,
         }
     }
     float pivot = v1/(v1-v2);
-    out.coords[dim]=p1.coords[dim]+(p2.coords[dim]-p1.coords[dim])*pivot;
+    float another_pivot=1-pivot;
+    out.coords[dim]= p2.coords[dim] * pivot + p1.coords[dim] * another_pivot;
+//    out.coords[dim]=p1.coords[dim]+(p2.coords[dim]-p1.coords[dim])*pivot;
 }
 
 __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
@@ -1839,9 +1836,11 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=offset;i<EdgeArray_sz;++i){
         if(vexNums[i] == 1){
-            EdgeNode nowEdge=EdgeArray[i];
-            int owner=nowEdge.ownerNodeIdx;
-            int kind=nowEdge.edgeKind;
+//            EdgeNode nowEdge=EdgeArray[i];
+//            int owner=nowEdge.ownerNodeIdx;
+//            int kind=nowEdge.edgeKind;
+            int owner=EdgeArray[i].ownerNodeIdx;
+            int kind=EdgeArray[i].edgeKind;
             int orientation=kind>>2;
             int off[2];
             off[0]=kind&1;
@@ -1879,14 +1878,13 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
                 default:
                     printf("error\n");
             }
-//            OctNode ownerNode=NodeArray[owner];
-//            int v1=ownerNode.vertices[idx[0]]-1;
-//            int v2=ownerNode.vertices[idx[1]]-1;
             int v1=NodeArray[owner].vertices[idx[0]]-1;
             int v2=NodeArray[owner].vertices[idx[1]]-1;
+            Point3D<float> p1=VertexArray[v1].pos,p2=VertexArray[v2].pos;
+            float f1=vvalue[v1],f2=vvalue[v2];
             Point3D<float> isoPoint;
-            interpolatePoint(VertexArray[v1].pos,VertexArray[v2].pos,
-                             orientation,vvalue[v1],vvalue[v2],
+            interpolatePoint(p1,p2,
+                             orientation,f1,f2,
                              isoPoint);
 //            if(v1<0 || v2<0){
 //                printf("error\n");

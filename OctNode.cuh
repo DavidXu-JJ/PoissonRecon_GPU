@@ -19,6 +19,7 @@ public:
     int dnum;
     // (real idx) + 1,
     // idx start from (0 + 1)
+    // encode the vertices idx?
     int vertices[8];
     // (real idx) + 1,
     // idx start from (0 + 1)
@@ -32,6 +33,7 @@ class VertexNode{
 public:
     Point3D<float> pos;
     int ownerNodeIdx;
+    // encode the nodes?
     int nodes[8];
 };
 
