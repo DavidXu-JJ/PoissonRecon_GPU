@@ -61,6 +61,8 @@ __global__ void outputDeviceArray(float *d_addr,int size) {
 
 #define stackCapacity 2000
 
+#define convTimes 2
+
 __constant__ int LUTparent[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
         {1,1,2,4,4,5,4,4,5,10,10,11,13,13,14,13,13,14,10,10,11,13,13,14,13,13,14},
@@ -894,17 +896,17 @@ __host__ __device__ void getEncodedFunctionIdxOfNode(const int& key,const int &d
 #endif
 }
 
-__device__ float F_center_width_Point(const ConfirmedPPolynomial<2,4> &BaseFunctionMaxDepth_d,const Point3D<float> &center,const float &width,const Point3D<float> &point){
-    ConfirmedPPolynomial<2,4> thisFunction_X = BaseFunctionMaxDepth_d.shift(center.coords[0]);
-    ConfirmedPPolynomial<2,4> thisFunction_Y = BaseFunctionMaxDepth_d.shift(center.coords[1]);
-    ConfirmedPPolynomial<2,4> thisFunction_Z = BaseFunctionMaxDepth_d.shift(center.coords[2]);
+__device__ float F_center_width_Point(const ConfirmedPPolynomial<convTimes,convTimes+2> &BaseFunctionMaxDepth_d,const Point3D<float> &center,const float &width,const Point3D<float> &point){
+    ConfirmedPPolynomial<convTimes,convTimes+2> thisFunction_X = BaseFunctionMaxDepth_d.shift(center.coords[0]);
+    ConfirmedPPolynomial<convTimes,convTimes+2> thisFunction_Y = BaseFunctionMaxDepth_d.shift(center.coords[1]);
+    ConfirmedPPolynomial<convTimes,convTimes+2> thisFunction_Z = BaseFunctionMaxDepth_d.shift(center.coords[2]);
     float x=value(thisFunction_X,point.coords[0]);
     float y=value(thisFunction_Y,point.coords[1]);
     float z=value(thisFunction_Z,point.coords[2]);
     return x*y*z;
 }
 
-__global__ void computeVectorField(ConfirmedPPolynomial<2,4> *BaseFunctionMaxDepth_d,Point3D<float> *samplePoints_d,Point3D<float> *sampleNormals_d,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField){
+__global__ void computeVectorField(ConfirmedPPolynomial<convTimes,convTimes+2> *BaseFunctionMaxDepth_d,Point3D<float> *samplePoints_d,Point3D<float> *sampleNormals_d,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1297,7 +1299,7 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
 
 __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoints_d,int *PointToNodeArrayD,int count,int start_D,
                                                      OctNode *NodeArray,float *d_x,
-                                                     int *EncodedNodeIdxInFunction, ConfirmedPPolynomial<3,4> *baseFunctions_d,
+                                                     int *EncodedNodeIdxInFunction, ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d,
                                                      float *pointValue)
 {
 //    printf("count:%d\n",count);
@@ -1323,9 +1325,9 @@ __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoint
                     idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
                     idxO[2]=encode_idx/decode_offset2;
 
-                    ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
-                    ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
-                    ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
+                    ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+                    ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+                    ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
 
                     val += d_x[neigh] * value(funcX,samplePoint.coords[0])
                                       * value(funcY,samplePoint.coords[1])
@@ -1768,7 +1770,7 @@ __device__ int findStack(int *stack,int &top,const int &val){
 
 __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int VertexArray_sz,
                                                    OctNode *NodeArray,float *d_x,
-                                                   int *EncodedNodeIdxInFunction,ConfirmedPPolynomial<3,4> *baseFunctions_d,
+                                                   int *EncodedNodeIdxInFunction,ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d,
                                                    int *DepthBuffer,Point3D<float> *CenterBuffer,
                                                    float *vvalue,float isoValue)
 {
@@ -1812,9 +1814,9 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
 //                idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
 //                idxO[2]=encode_idx/decode_offset2;
 //
-//                ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
-//                ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
-//                ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
+//                ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+//                ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+//                ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
 //
 //                val += d_x[nowNode] * value(funcX,vertexPos.coords[0])
 //                       * value(funcY,vertexPos.coords[1])
@@ -1848,9 +1850,9 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
                             idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
                             idxO[2]=encode_idx/decode_offset2;
 
-                            ConfirmedPPolynomial<3,4> funcX=baseFunctions_d[idxO[0]];
-                            ConfirmedPPolynomial<3,4> funcY=baseFunctions_d[idxO[1]];
-                            ConfirmedPPolynomial<3,4> funcZ=baseFunctions_d[idxO[2]];
+                            ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+                            ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+                            ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
 
                             val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
                                               * value(funcY,nowVertex.pos.coords[1])
@@ -2119,12 +2121,12 @@ int main() {
 
     double cpu_st=cpuSecond();
 
-    PPolynomial<2> ReconstructionFunction = PPolynomial<2>::GaussianApproximation();
-    FunctionData<2,double> fData;
+    PPolynomial<convTimes> ReconstructionFunction = PPolynomial<convTimes>::GaussianApproximation();
+    FunctionData<convTimes,double> fData;
     fData.set(maxDepth_h,ReconstructionFunction,normalize,0);
     //  precomputed inner product table may can be optimized to GPU parallel
     fData.setDotTables(fData.DOT_FLAG | fData.D_DOT_FLAG | fData.D2_DOT_FLAG);
-    PPolynomial<2> &F=ReconstructionFunction;
+    PPolynomial<convTimes> &F=ReconstructionFunction;
     switch(normalize){
         case 2:
             F=F/sqrt((F*F).integral(F.polys[0].start,F.polys[F.polyCount-1].start));
@@ -2151,14 +2153,14 @@ int main() {
 
     fData.clearDotTables(fData.DOT_FLAG | fData.D_DOT_FLAG | fData.D2_DOT_FLAG);
 
-    ConfirmedPPolynomial<3,4> baseFunctions_h[fData.res];
+    ConfirmedPPolynomial<convTimes+1,convTimes+2> baseFunctions_h[fData.res];
     for(int i=0;i<fData.res;++i){
         baseFunctions_h[i]=fData.baseFunctions[i];
     }
 
-    ConfirmedPPolynomial<3,4> *baseFunctions_d=NULL;
-    nByte=sizeof(ConfirmedPPolynomial<3,4>) * fData.res;
-    CHECK(cudaMalloc((ConfirmedPPolynomial<3,4>**)&baseFunctions_d,nByte));
+    ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d=NULL;
+    nByte=sizeof(ConfirmedPPolynomial<convTimes+1,convTimes+2>) * fData.res;
+    CHECK(cudaMalloc((ConfirmedPPolynomial<convTimes+1,convTimes+2>**)&baseFunctions_d,nByte));
     CHECK(cudaMemcpy(baseFunctions_d,baseFunctions_h,nByte,cudaMemcpyHostToDevice));
 
     double cpu_ed=cpuSecond();
@@ -2166,10 +2168,10 @@ int main() {
 
     // ----------------------------------------------------
 
-    ConfirmedPPolynomial<2,4> BaseFunctionMaxDepth(ReconstructionFunction.scale(1.0/(1<<maxDepth_h)));
+    ConfirmedPPolynomial<convTimes,convTimes+2> BaseFunctionMaxDepth(ReconstructionFunction.scale(1.0/(1<<maxDepth_h)));
     nByte=sizeof(BaseFunctionMaxDepth);
-    ConfirmedPPolynomial<2,4> *BaseFunctionMaxDepth_d= NULL;
-    CHECK(cudaMalloc((ConfirmedPPolynomial<2,4>**)&BaseFunctionMaxDepth_d,nByte));
+    ConfirmedPPolynomial<convTimes,convTimes+2> *BaseFunctionMaxDepth_d= NULL;
+    CHECK(cudaMalloc((ConfirmedPPolynomial<convTimes,convTimes+2>**)&BaseFunctionMaxDepth_d,nByte));
     CHECK(cudaMemcpy(BaseFunctionMaxDepth_d,&BaseFunctionMaxDepth,nByte,cudaMemcpyHostToDevice));
 
     int NodeDNum=NodeArrayCount_h[maxDepth_h];
