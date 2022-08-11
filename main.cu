@@ -2185,6 +2185,8 @@ int main() {
     thrust::device_ptr<VertexNode> VertexArray_end=thrust::copy_if(preVertexArray_ptr,preVertexArray_ptr+8*NodeDNum,VertexArray_ptr,validVertex());
     cudaDeviceSynchronize();
 
+    cudaFree(preVertexArray);
+
     int VertexArray_sz=VertexArray_end-VertexArray_ptr;
 
     maintainVertexNodePointerNonAtomic<<<grid,block>>>(VertexArray,VertexArray_sz,NodeArray);
@@ -2219,6 +2221,9 @@ int main() {
     double mid7=cpuSecond();
     printf("VertexArray_sz:%d\nGPU build VertexArray takes:%lfs\n",VertexArray_sz,mid7-mid6);
 
+    // ----------------------------------------------------
+
+    // generate the edge at maxDepth
     EdgeNode *preEdgeArray=NULL;
     nByte = sizeof(EdgeNode) * 12 *NodeDNum;
     CHECK(cudaMalloc((EdgeNode**)&preEdgeArray,nByte));
@@ -2234,6 +2239,9 @@ int main() {
     thrust::device_ptr<EdgeNode> preEdgeArray_ptr=thrust::device_pointer_cast<EdgeNode>(preEdgeArray);
     thrust::device_ptr<EdgeNode> EdgeArray_ptr=thrust::device_pointer_cast<EdgeNode>(EdgeArray);
     thrust::device_ptr<EdgeNode> EdgeArray_end=thrust::copy_if(preEdgeArray_ptr,preEdgeArray_ptr+12*NodeDNum,EdgeArray_ptr,validEdge());
+    cudaDeviceSynchronize();
+
+    cudaFree(preEdgeArray);
 
     int EdgeArray_sz=EdgeArray_end-EdgeArray_ptr;
 
@@ -2257,6 +2265,9 @@ int main() {
                                                        vvalue,isoValue);
     cudaDeviceSynchronize();
 
+    double mid9=cpuSecond();
+    printf("Compute vertex implicit function value takes:%lfs\n",mid9-mid8);
+
     // Step 2: compute vertex number and address
     int *vexNums=NULL;
     nByte = sizeof(int) * EdgeArray_sz;
@@ -2278,6 +2289,9 @@ int main() {
 
     thrust::exclusive_scan(vexNums_ptr,vexNums_ptr+EdgeArray_sz,vexAddress_ptr);
     cudaDeviceSynchronize();
+
+    double mid10=cpuSecond();
+    printf("Compute vexAddress takes:%lfs\n",mid10-mid9);
 
     // Step 3: compute triangle number and address
     int *triNums=NULL;
@@ -2307,6 +2321,9 @@ int main() {
     thrust::exclusive_scan(triNums_ptr,triNums_ptr+NodeDNum,triAddress_ptr);
     cudaDeviceSynchronize();
 
+    double mid11=cpuSecond();
+    printf("Compute triAddress takes:%lfs\n",mid11-mid10);
+
 
     // Step 4: generate vertices
     int lastVexAddr;
@@ -2325,6 +2342,8 @@ int main() {
                                               VertexBuffer);
     cudaDeviceSynchronize();
 
+    double mid12=cpuSecond();
+    printf("Generate interpolate vertices takes:%lfs\n",mid12-mid11);
 
     // Step 5: generate triangles
     int lastTriAddr;
@@ -2344,6 +2363,8 @@ int main() {
                                         triAddress,TriangleBuffer);
     cudaDeviceSynchronize();
 
+    double mid13=cpuSecond();
+    printf("Process Triangle indices takes:%lfs\n",mid13-mid12);
 
 //    nByte = sizeof(int) * 3 * allTriNums;
 
