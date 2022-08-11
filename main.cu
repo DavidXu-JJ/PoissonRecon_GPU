@@ -1342,6 +1342,7 @@ __global__ void calculatePointsImplicitFunctionValue(Point3D<float> *samplePoint
     }
 }
 
+// deprecated
 __host__ __device__ void getNodeCenter(const int &key,Point3D<float> &myCenter){
     myCenter.coords[0]=float(0.5);
     myCenter.coords[1]=float(0.5);
@@ -1361,8 +1362,49 @@ __host__ __device__ void getNodeCenter(const int &key,Point3D<float> &myCenter){
     }
 }
 
+__host__ __device__ void getNodeCenterAllDepth(const int &key,Point3D<float> &myCenter,int nowDepth){
+    myCenter.coords[0]=float(0.5);
+    myCenter.coords[1]=float(0.5);
+    myCenter.coords[2]=float(0.5);
+    float myWidth=0.25f;
+    for(int i=maxDepth-1;i>=(maxDepth-nowDepth);--i){
+        if(( key >> (3 * i + 2) ) & 1)
+            myCenter.coords[0] += myWidth;
+        else myCenter.coords[0] -= myWidth;
+        if(( key >> (3 * i + 1) ) & 1)
+            myCenter.coords[1] += myWidth;
+        else myCenter.coords[1] -=myWidth;
+        if(( key >> (3 * i) ) & 1)
+            myCenter.coords[2] += myWidth;
+        else myCenter.coords[2] -=myWidth;
+        myWidth/=2;
+    }
+}
+
+__global__ void precomputeDepth(int *BaseAddressArray_d,int NodeArray_sz,int *DepthBuffer)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<NodeArray_sz;i+=stride){
+        DepthBuffer[i]= getDepth(i,BaseAddressArray_d);
+    }
+}
+
+__global__ void precomputeCenter(int *DepthBuffer,OctNode *NodeArray,int NodeArray_sz,Point3D<float> *CenterBuffer)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<NodeArray_sz;i+=stride){
+        Point3D<float> nowCenter;
+        getNodeCenterAllDepth(NodeArray[i].key,nowCenter,DepthBuffer[i]);
+        CenterBuffer[i]=nowCenter;
+    }
+}
+
 // use for node at maxDepth
-__global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode *preVertexArray){
+__global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode *preVertexArray,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1380,7 +1422,8 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[i].neighs[k];
             if(neigh[k] != -1){
-                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+                neighCenter[k]=CenterBuffer[neigh[k]];
             }
 //            else empty++;
         }
@@ -1443,7 +1486,7 @@ struct validVertex{
 };
 
 // deprecated
-__global__ void maintainVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray){
+__global__ void maintainVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1458,7 +1501,8 @@ __global__ void maintainVertexNodePointer(VertexNode *VertexArray,int VertexArra
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[owner].neighs[k];
             if(neigh[k] != -1){
-                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+                neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
         int cnt=0;
@@ -1477,7 +1521,7 @@ __global__ void maintainVertexNodePointer(VertexNode *VertexArray,int VertexArra
     }
 }
 
-__global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray){
+__global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1498,7 +1542,8 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[owner].neighs[k];
             if(neigh[k] != -1){
-                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+                neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
         int cnt=0;
@@ -1526,7 +1571,7 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
 }
 
 // use for node at maxDepth
-__global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *preEdgeArray){
+__global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *preEdgeArray,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1543,7 +1588,8 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *pr
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[i].neighs[k];
             if(neigh[k] != -1){
-                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+                neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
         const Point3D<float> &nodeCenter = neighCenter[13];
@@ -1623,7 +1669,7 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *pr
 //    printf("thread finish\n");
 }
 
-__global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,OctNode *NodeArray){
+__global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,OctNode *NodeArray,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
@@ -1639,7 +1685,8 @@ __global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,Oct
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[owner].neighs[k];
             if(neigh[k] != -1){
-                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
+                neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
 
@@ -1692,6 +1739,7 @@ struct validEdge{
 __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int VertexArray_sz,
                                                    OctNode *NodeArray,float *d_x,
                                                    int *EncodedNodeIdxInFunction,ConfirmedPPolynomial<3,4> *baseFunctions_d,
+                                                   int *DepthBuffer,Point3D<float> *CenterBuffer,
                                                    float *vvalue,float isoValue)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -2180,6 +2228,19 @@ int main() {
     // ----------------------------------------------------
 
     // pre-compute the center of node ?
+    int *DepthBuffer=NULL;
+    nByte = sizeof(int) * NodeArray_sz;
+    CHECK(cudaMalloc((int**)&DepthBuffer,nByte));
+    precomputeDepth<<<grid,block>>>(BaseAddressArray_d,NodeArray_sz,DepthBuffer);
+    cudaDeviceSynchronize();
+
+    Point3D<float> *CenterBuffer=NULL;
+    nByte = sizeof(Point3D<float>) * NodeArray_sz;
+    CHECK(cudaMalloc((Point3D<float>**)&CenterBuffer,nByte));
+    precomputeCenter<<<grid,block>>>(DepthBuffer,NodeArray,NodeArray_sz,CenterBuffer);
+    cudaDeviceSynchronize();
+
+
 
     // generate vertex at maxDepth
     VertexNode *preVertexArray=NULL;
@@ -2188,7 +2249,7 @@ int main() {
     CHECK(cudaMemset(preVertexArray,0,nByte));
     grid=32;
     block=(32,32);
-    initVertexOwner<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preVertexArray);
+    initVertexOwner<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preVertexArray,CenterBuffer);
     cudaDeviceSynchronize();
 
     VertexNode *VertexArray=NULL;
@@ -2204,7 +2265,7 @@ int main() {
 
     int VertexArray_sz=VertexArray_end-VertexArray_ptr;
 
-    maintainVertexNodePointerNonAtomic<<<grid,block>>>(VertexArray,VertexArray_sz,NodeArray);
+    maintainVertexNodePointerNonAtomic<<<grid,block>>>(VertexArray,VertexArray_sz,NodeArray,CenterBuffer);
     cudaDeviceSynchronize();
 
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
@@ -2244,7 +2305,7 @@ int main() {
     CHECK(cudaMalloc((EdgeNode**)&preEdgeArray,nByte));
     CHECK(cudaMemset(preEdgeArray,0,nByte));
 
-    initEdgeArray<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preEdgeArray);
+    initEdgeArray<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preEdgeArray,CenterBuffer);
     cudaDeviceSynchronize();
 
     EdgeNode *EdgeArray=NULL;
@@ -2260,7 +2321,7 @@ int main() {
 
     int EdgeArray_sz=EdgeArray_end-EdgeArray_ptr;
 
-    maintainEdgeNodePointer<<<grid,block>>>(EdgeArray,EdgeArray_sz,NodeArray);
+    maintainEdgeNodePointer<<<grid,block>>>(EdgeArray,EdgeArray_sz,NodeArray,CenterBuffer);
     cudaDeviceSynchronize();
 
     double mid8=cpuSecond();
@@ -2277,6 +2338,7 @@ int main() {
     computeVertexImplicitFunctionValue<<<grid,block>>>(VertexArray,VertexArray_sz,
                                                        NodeArray,d_x,
                                                        EncodedNodeIdxInFunction,baseFunctions_d,
+                                                       DepthBuffer,CenterBuffer,
                                                        vvalue,isoValue);
     cudaDeviceSynchronize();
 
