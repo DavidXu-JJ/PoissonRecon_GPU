@@ -2094,7 +2094,7 @@ int main() {
 
             float *divg=NULL;
             nByte=sizeof(float)*coverNums_h[27];
-            CHECK(cudaMallocManaged((float**)&divg,nByte));
+            CHECK(cudaMalloc((float**)&divg,nByte));
             CHECK(cudaMemset(divg,0,nByte));
 
             int *DIdxArray=NULL;
@@ -2358,31 +2358,36 @@ int main() {
 //    PlyWriteTriangles(outName,VertexBuffer,allVexNums,
 //                      TriangleBuffer,allTriNums,
 //                      PLY_BINARY_NATIVE,center,scale,NULL,0);
-    CoredVectorMeshData mesh;
-    float mn=999,mx=-999;
-    for(int i=0;i<allVexNums;++i){
-        if(abs(VertexBuffer[i].coords[0])<EPSILON)
-            printf("error\n");
-        mesh.inCorePoints.push_back(VertexBuffer[i]);
-        for(int j=0;j<3;++j){
-            mn=std::min(mn,mesh.inCorePoints[i].coords[j]);
-            mx=std::max(mx,mesh.inCorePoints[i].coords[j]);
-        }
-    }
-    printf("min:%f, max:%f\n",mn,mx);
-    int inCoreFlag=0;
-    for(int i=0;i<3;++i){
-        inCoreFlag|=CoredMeshData::IN_CORE_FLAG[i];
-    }
-    for(int i=0;i<allTriNums;++i){
-        TriangleIndex tri;
-        for(int j=0;j<3;++j) {
-            tri.idx[j] = TriangleBuffer[3*i+j];
-            if(tri.idx[j]<0 || tri.idx[j]>=allVexNums){
-                printf("tri error\n");
-            }
-        }
-        mesh.addTriangle(tri,inCoreFlag);
-    }
-    PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
+
+    PlyWriteTriangles(outName,VertexBuffer,allVexNums,
+                      TriangleBuffer,allTriNums,
+                      PLY_ASCII,center,scale,NULL,0);
+
+//    CoredVectorMeshData mesh;
+//    float mn=999,mx=-999;
+//    for(int i=0;i<allVexNums;++i){
+//        if(abs(VertexBuffer[i].coords[0])<EPSILON)
+//            printf("error\n");
+//        mesh.inCorePoints.push_back(VertexBuffer[i]);
+//        for(int j=0;j<3;++j){
+//            mn=std::min(mn,mesh.inCorePoints[i].coords[j]);
+//            mx=std::max(mx,mesh.inCorePoints[i].coords[j]);
+//        }
+//    }
+//    printf("min:%f, max:%f\n",mn,mx);
+//    int inCoreFlag=0;
+//    for(int i=0;i<3;++i){
+//        inCoreFlag|=CoredMeshData::IN_CORE_FLAG[i];
+//    }
+//    for(int i=0;i<allTriNums;++i){
+//        TriangleIndex tri;
+//        for(int j=0;j<3;++j) {
+//            tri.idx[j] = TriangleBuffer[3*i+j];
+//            if(tri.idx[j]<0 || tri.idx[j]>=allVexNums){
+//                printf("tri error\n");
+//            }
+//        }
+//        mesh.addTriangle(tri,inCoreFlag);
+//    }
+//    PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
 }
