@@ -23,6 +23,9 @@ public:
     // (real idx) + 1,
     // idx start from (0 + 1)
     int edges[12];
+    // (real idx) + 1
+    // idx start from (0 + 1)
+    int face[6];
 };
 
 class VertexNode{

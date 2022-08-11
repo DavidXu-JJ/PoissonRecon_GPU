@@ -1847,6 +1847,22 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
             off[0]=kind&1;
             off[1]=(kind&2)>>1;
             int idx[2];
+
+//            int xyz[6];
+//            int cnt=0;
+//            for(int k=0;k<3;++k){
+//                if(k==orientation){
+//                    xyz[k]=0;
+//                    xyz[3+k]=1;
+//                }else{
+//                    xyz[k]=off[cnt];
+//                    xyz[3+k]=off[cnt];
+//                    ++cnt;
+//                }
+//            }
+//            idx[0] = VertexIndex(xyz[0],xyz[1],xyz[2]);
+//            idx[1] = VertexIndex(xyz[3],xyz[4],xyz[5]);
+
             switch (orientation) {
                 case 0:
                     idx[0]= VertexIndex(0,off[0],off[1]);
@@ -1863,10 +1879,11 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
                 default:
                     printf("error\n");
             }
-            OctNode ownerNode=NodeArray[owner];
-//            printf("%d %d %d\n",owner,idx[0],idx[1]);
-            int v1=ownerNode.vertices[idx[0]]-1;
-            int v2=ownerNode.vertices[idx[1]]-1;
+//            OctNode ownerNode=NodeArray[owner];
+//            int v1=ownerNode.vertices[idx[0]]-1;
+//            int v2=ownerNode.vertices[idx[1]]-1;
+            int v1=NodeArray[owner].vertices[idx[0]]-1;
+            int v2=NodeArray[owner].vertices[idx[1]]-1;
             Point3D<float> isoPoint;
             interpolatePoint(VertexArray[v1].pos,VertexArray[v2].pos,
                              orientation,vvalue[v1],vvalue[v2],

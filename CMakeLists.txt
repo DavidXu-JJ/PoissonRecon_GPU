@@ -1,5 +1,7 @@
 cmake_minimum_required(VERSION 3.22)
 
+set(CMAKE_CUDA_COMPILER "/usr/local/cuda/bin/nvcc")
+
 project(GPU_PoissonRecon LANGUAGES CXX CUDA)
 
 #include_directories(${CMAKE_CURRENT_SOURCE_DIR}/src)
