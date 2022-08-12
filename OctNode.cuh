@@ -29,7 +29,7 @@ public:
 
     // (real idx) + 1
     // idx start from (0 + 1)
-//    int face[6];
+    int faces[6];
 };
 
 class VertexNode{
@@ -53,7 +53,7 @@ class FaceNode{
 public:
     int faceKind;
     int ownerNodeIdx;
-    int fatherFaceIdx;
+    int hasParentFace;
     int nodes[2];
 };
 

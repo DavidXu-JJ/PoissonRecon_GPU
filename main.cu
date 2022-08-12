@@ -1469,7 +1469,7 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
         for(int j=0;j<8;++j) {
             if(NodeOwnerIdx[j] == i) {
                 int vertexIdx = 8 * (i - left) + j;
-                preVertexArray[vertexIdx].ownerNodeIdx = NodeOwnerIdx[j];
+                preVertexArray[vertexIdx].ownerNodeIdx = i;
                 preVertexArray[vertexIdx].pos.coords[0] = vertexPos[j].coords[0] ;
                 preVertexArray[vertexIdx].pos.coords[1] = vertexPos[j].coords[1] ;
                 preVertexArray[vertexIdx].pos.coords[2] = vertexPos[j].coords[2] ;
@@ -1661,7 +1661,7 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *pr
         for(int j=0;j<12;++j) {
             if(NodeOwnerIdx[j] == i) {
                 int edgeIdx = 12 * (i - left) + j;
-                preEdgeArray[edgeIdx].ownerNodeIdx = NodeOwnerIdx[j];
+                preEdgeArray[edgeIdx].ownerNodeIdx = i;
                 preEdgeArray[edgeIdx].edgeKind = j;
 //                preEdgeArray[edgeIdx].edgeKind = off[2*j] | (off[2*j+1]<<1) | (orientation[j]<<2);
 //                preEdgeArray[edgeIdx].orientation = orientation[j];
@@ -1717,7 +1717,7 @@ __global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,Oct
         int cnt=0;
         for(int k=0;k<27;++k){
             if(neigh[k] != -1 && SquareDistance(edgeCenterPos,neighCenter[k]) < Widthsq){
-                EdgeArray[i].nodes[cnt]=neigh[k];
+                EdgeArray[i].nodes[cnt] = neigh[k];
                 ++cnt;
                 int idx=orientation<<2;
                 int dim=0;
@@ -2102,7 +2102,108 @@ __global__ void initFaceArray(OctNode *NodeArray,int left,int right,FaceNode *pr
         const Point3D<float> &nodeCenter = neighCenter[13];
 
         Point3D<float> faceCenterPos[6];
+        int orientation;
+        int off;
+        int multi;
+        for(int j=0;j<6;++j){
+            orientation = j>>1;
+            off = j&1;
+            multi = (2*off)-1;
+            faceCenterPos[j].coords[0] = nodeCenter.coords[0];
+            faceCenterPos[j].coords[1] = nodeCenter.coords[1];
+            faceCenterPos[j].coords[2] = nodeCenter.coords[2];
+            faceCenterPos[j].coords[orientation] += multi * halfWidth;
+        }
 
+        for(int j=0;j<6;++j){
+            NodeOwnerKey[j]=0x7fffffff;
+        }
+        for(int j=0;j<6;++j){
+            for(int k=0;k<27;++k){
+                if(neigh[k] != -1 && SquareDistance(faceCenterPos[j],neighCenter[k]) < Widthsq){
+                    int neighKey = NodeArray[neigh[k]].key;
+                    if(NodeOwnerKey[j]>neighKey){
+                        NodeOwnerKey[j]=neighKey;
+                        NodeOwnerIdx[j]=neigh[k];
+                    }
+                }
+            }
+        }
+
+        int parent = NodeArray[i].parent;
+        int sonKey = ( NodeArray[i].key >> (3 * (maxDepth-nowDepth)) ) & 7;
+        for(int j=0;j<6;++j){
+            if(NodeOwnerIdx[j] == i){
+                int faceIdx = 6 * (i-left) + j;
+                preFaceArray[faceIdx].ownerNodeIdx = i;
+                preFaceArray[faceIdx].faceKind = j;
+                if(parent == -1){
+                    preFaceArray[faceIdx].hasParentFace = 0;
+                }else{
+                    if(parentFaceKind[sonKey][j] != -1){
+                        preFaceArray[faceIdx].hasParentFace = 1;
+                    }else{
+                        preFaceArray[faceIdx].hasParentFace = 0;
+                    }
+                }
+            }
+        }
+
+    }
+}
+
+struct validFace{
+    __device__ bool operator()(const FaceNode &x){
+        return x.ownerNodeIdx != -1;
+    }
+};
+
+__global__ void maintainFaceNodePointer(FaceNode *FaceArray,int FaceArray_sz,
+                                        OctNode *NodeArray, int *BaseAddressArray_d,
+                                        Point3D<float> *CenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<FaceArray_sz;i+=stride){
+        int owner = FaceArray[i].ownerNodeIdx;
+        int depth = getDepth(owner,BaseAddressArray_d);
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+        for(int k=0;k<27;++k){
+            neigh[k]=NodeArray[owner].neighs[k];
+            if(neigh[k] != -1){
+                neighCenter[k]=CenterBuffer[neigh[k]];
+            }
+        }
+
+        const Point3D<float> &nodeCenter = neighCenter[13];
+        Point3D<float> faceCenterPos;
+        int kind = FaceArray[i].faceKind;
+        int orientation = kind >> 1;
+        int off = kind & 1;
+        int multi = (2*off)-1;
+
+        faceCenterPos.coords[0] = nodeCenter.coords[0];
+        faceCenterPos.coords[1] = nodeCenter.coords[1];
+        faceCenterPos.coords[2] = nodeCenter.coords[2];
+        faceCenterPos.coords[orientation] += multi *halfWidth;
+
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(faceCenterPos,neighCenter[k]) < Widthsq){
+                FaceArray[i].nodes[cnt] = neigh[k];
+                ++cnt;
+                int idx = orientation << 1;
+                if(neighCenter[k].coords[orientation]-faceCenterPos.coords[orientation]<0)
+                    ++idx;
+
+                NodeArray[neigh[k]].faces[idx] = i+1;
+            }
+        }
     }
 }
 
@@ -2453,6 +2554,44 @@ int main() {
 
     // ----------------------------------------------------
 
+
+    FaceNode *preFaceArray=NULL;
+    nByte = sizeof(FaceNode) * 6 * NodeArray_sz;
+    CHECK(cudaMalloc((FaceNode**)&preFaceArray,nByte));
+    CHECK(cudaMemset(preFaceArray,-1,nByte));
+
+    initFaceArray<<<grid,block>>>(NodeArray,0,NodeArray_sz,preFaceArray,DepthBuffer,CenterBuffer);
+    cudaDeviceSynchronize();
+
+    FaceNode *FaceArray = NULL;
+//    nByte = sizeof(FaceNode) * 6 * NodeArray_sz;
+    CHECK(cudaMalloc((FaceNode**)&FaceArray,nByte));
+    CHECK(cudaMemset(FaceArray,0,nByte));
+    thrust::device_ptr<FaceNode> preFaceArray_ptr=thrust::device_pointer_cast<FaceNode>(preFaceArray);
+    thrust::device_ptr<FaceNode> FaceArray_ptr=thrust::device_pointer_cast<FaceNode>(FaceArray);
+    thrust::device_ptr<FaceNode> FaceArray_end=thrust::copy_if(preFaceArray_ptr,preFaceArray_ptr+6*NodeArray_sz,FaceArray_ptr,validFace());
+    cudaDeviceSynchronize();
+
+    int FaceArray_sz = FaceArray_end - FaceArray_ptr;
+
+    cudaFree(preFaceArray);
+
+    maintainFaceNodePointer<<<grid,block>>>(FaceArray,FaceArray_sz,
+                                            NodeArray,BaseAddressArray_d,
+                                            CenterBuffer);
+    cudaDeviceSynchronize();
+
+    double mid_insert=cpuSecond();
+    printf("FaceArray_sz:%d\nGPU build FaceArray takes:%lfs\n",FaceArray_sz,mid_insert-mid8);
+
+    int *hasSurfaceIntersection=NULL;
+    nByte = sizeof(int) * FaceArray_sz;
+    CHECK(cudaMalloc((int**)&hasSurfaceIntersection,nByte));
+    CHECK(cudaMemset(hasSurfaceIntersection,0,nByte));
+
+
+    // ----------------------------------------------------
+
     // Step 1: compute implicit function values for octree vertices
     float *vvalue = NULL;
     nByte = sizeof(float) * VertexArray_sz;
@@ -2467,7 +2606,7 @@ int main() {
     cudaDeviceSynchronize();
 
     double mid9=cpuSecond();
-    printf("Compute vertex implicit function value takes:%lfs\n",mid9-mid8);
+    printf("Compute vertex implicit function value takes:%lfs\n",mid9-mid_insert);
 
     // Step 2: compute vertex number and address
     int *vexNums=NULL;
@@ -2568,12 +2707,6 @@ int main() {
     printf("Process Triangle indices takes:%lfs\n",mid13-mid12);
 
 
-//    FaceNode *preFaceArray=NULL;
-//    nByte = sizeof(FaceNode) * NodeArray_sz;
-//    CHECK(cudaMalloc((FaceNode**)&preFaceArray,nByte));
-//    CHECK(cudaMemset(preFaceArray,0,nByte));
-//
-//    initFaceArray<<<grid,block>>>
 
 //    nByte = sizeof(int) * 3 * allTriNums;
 
