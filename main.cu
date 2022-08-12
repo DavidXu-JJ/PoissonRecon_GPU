@@ -1407,18 +1407,20 @@ __global__ void precomputeCenter(int *DepthBuffer,OctNode *NodeArray,int NodeArr
     }
 }
 
-// use for node at maxDepth
-__global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode *preVertexArray,Point3D<float> *CenterBuffer){
+__global__ void initVertexOwner(OctNode *NodeArray,int left,int right,
+                                VertexNode *preVertexArray,
+                                int *DepthBuffer,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     offset+=left;
     int NodeOwnerKey[8];
     int NodeOwnerIdx[8];
-    float halfWidth = 1.0f/(1<<(maxDepth+1));
-    float Width = 1.0f/(1<<(maxDepth));
-    float Widthsq = Width * Width;
     for(int i=offset;i<right;i+=stride){
+        int depth = DepthBuffer[i];
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
         Point3D<float> neighCenter[27];
         int neigh[27];
 //        int empty=0;
@@ -1426,7 +1428,6 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,VertexNode
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[i].neighs[k];
             if(neigh[k] != -1){
-//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
                 neighCenter[k]=CenterBuffer[neigh[k]];
             }
 //            else empty++;
@@ -1489,51 +1490,18 @@ struct validVertex{
     }
 };
 
-// deprecated
-__global__ void maintainVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray,Point3D<float> *CenterBuffer){
+__global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int VertexArray_sz,
+                                                   OctNode *NodeArray,
+                                                   int *DepthBuffer,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    float halfWidth = 1.0f/(1<<(maxDepth+1));
-    float Width = 1.0f/(1<<(maxDepth));
-    float Widthsq = Width * Width;
     for(int i=offset;i<VertexArray_sz;i+=stride){
         int owner=VertexArray[i].ownerNodeIdx;
-        Point3D<float> neighCenter[27];
-        Point3D<float> vertexPos=VertexArray[i].pos;
-        int neigh[27];
-        for(int k=0;k<27;++k){
-            neigh[k]=NodeArray[owner].neighs[k];
-            if(neigh[k] != -1){
-//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
-                neighCenter[k]=CenterBuffer[neigh[k]];
-            }
-        }
-        int cnt=0;
-        for(int k=0;k<27;++k){
-            if(neigh[k] != -1 && SquareDistance(vertexPos,neighCenter[k]) < Widthsq){
-                VertexArray[i].nodes[cnt]=neigh[k];
-                ++cnt;
-                int idx=0;
-                while(idx<8){
-                    int prev= atomicCAS(&NodeArray[neigh[k]].vertices[idx],0,i+1);
-                    if(prev == 0) break;
-                    ++idx;
-                }
-            }
-        }
-    }
-}
-
-__global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int VertexArray_sz,OctNode *NodeArray,Point3D<float> *CenterBuffer){
-    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
-    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
-    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    float halfWidth = 1.0f/(1<<(maxDepth+1));
-    float Width = 1.0f/(1<<(maxDepth));
-    float Widthsq = Width * Width;
-    for(int i=offset;i<VertexArray_sz;i+=stride){
-        int owner=VertexArray[i].ownerNodeIdx;
+        int depth = DepthBuffer[owner];
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
         Point3D<float> neighCenter[27];
         Point3D<float> vertexPos=VertexArray[i].pos;
 
@@ -1784,90 +1752,35 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
         VertexNode nowVertex = VertexArray[i];
 //        Point3D<float> vertexPos = nowVertex.pos;
         float val=0.0f;
-        int stack[stackCapacity];
-        int top=0;
-//        pushStack(stack,top,0);
-//        int nowNode;
-//        int nowDepth;
-//        float nowRadius;
-//        Point3D<float> nowCenter;
-//        int nowOverlap;
-//        while(top){
-//            nowNode = popStack(stack,top);
-//            nowCenter = CenterBuffer[nowNode];
-//            nowDepth = DepthBuffer[nowNode];
-//            nowRadius = 1.5f/(1<<(nowDepth+1));
-////            if(top >1022)
-////                printf("error:%d\n",i);
-////                printf("%d,%d %d\n",top,nowNode,nowDepth);
-//            nowOverlap=1;
-//            for(int t=0;t<3;++t){
-//                if(abs(vertexPos.coords[t]-nowCenter.coords[t]) > nowRadius){
-//                    nowOverlap=0;
-//                    break;
-//                }
-//            }
-//            if(nowOverlap){
-//                int idxO[3];
-//                int encode_idx=EncodedNodeIdxInFunction[nowNode];
-//                idxO[0]=encode_idx%decode_offset1;
-//                idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
-//                idxO[2]=encode_idx/decode_offset2;
-//
-//                ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
-//                ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
-//                ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
-//
-//                val += d_x[nowNode] * value(funcX,vertexPos.coords[0])
-//                       * value(funcY,vertexPos.coords[1])
-//                       * value(funcZ,vertexPos.coords[2]);
-//                for(int j=0;j<8;++j){
-//                    int child = NodeArray[nowNode].children[j];
-//                    if(child !=-1) {
-////                        printf("parent:%d ,children:%d\n",nowNode,child);
-//                        pushStack(stack, top, child);
-////                        printf("top:%d\n",top);
-//                    }
-//                }
-//            }
-//        }
-//        for(int j=0;j<8;++j){
-//            int nowNode=nowVertex.nodes[j];
-            int nowNode = nowVertex.ownerNodeIdx;
-            if(nowNode>0){
-                while(nowNode != -1){
-                    for(int k=0;k<27;++k){
-                        int neigh = NodeArray[nowNode].neighs[k];
-                        if(neigh != -1){
+        int nowNode = nowVertex.ownerNodeIdx;
+        if(nowNode>0){
+            while(nowNode != -1){
+                for(int k=0;k<27;++k){
+                    int neigh = NodeArray[nowNode].neighs[k];
+                    if(neigh != -1){
 
-//                            if(findStack(stack,top,neigh)){
-//                                continue;
-//                            }
 
-                            int idxO[3];
-                            int encode_idx=EncodedNodeIdxInFunction[neigh];
-                            idxO[0]=encode_idx%decode_offset1;
-                            idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
-                            idxO[2]=encode_idx/decode_offset2;
+                        int idxO[3];
+                        int encode_idx=EncodedNodeIdxInFunction[neigh];
+                        idxO[0]=encode_idx%decode_offset1;
+                        idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+                        idxO[2]=encode_idx/decode_offset2;
 
-                            ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
-                            ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
-                            ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
 
-                            val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
-                                              * value(funcY,nowVertex.pos.coords[1])
-                                              * value(funcZ,nowVertex.pos.coords[2]);
+                        val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
+                               * value(funcY,nowVertex.pos.coords[1])
+                               * value(funcZ,nowVertex.pos.coords[2]);
 
-//                            pushStack(stack,top,neigh);
-                        }
                     }
-                    nowNode = NodeArray[nowNode].parent;
                 }
-            }else break;
-//        }
+                nowNode = NodeArray[nowNode].parent;
+            }
+        }else break;
         vvalue[i]=val-isoValue;
     }
-//    printf("thread finish\n");
 }
 
 __device__ int VertexIndex(const int &x,const int &y,const int &z){
@@ -2044,7 +1957,8 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
 __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
                                     int *triNums,int *cubeCatagory,
                                     int *vexAddress,
-                                    int *triAddress, int *TriangleBuffer)
+                                    int *triAddress, int *TriangleBuffer,
+                                    FaceNode *FaceArray,int *hasSurfaceIntersection)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -2056,11 +1970,19 @@ __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
         int nowTriNum = triNums[depthDIdx];
         int nowCubeCatagory = cubeCatagory[depthDIdx];
         int nowTriangleBufferStart = 3 * triAddress[depthDIdx];
+        int edgeHasVertex[12]={0};
+//        for(int j=0;j<12;++j){
+//            edgeHasVertex[j]=0;
+//        }
         for(int j=0;j<3*nowTriNum;j+=3){
             int edgeIdx[3];
             edgeIdx[0]=triangles[nowCubeCatagory][j];
             edgeIdx[1]=triangles[nowCubeCatagory][j+1];
             edgeIdx[2]=triangles[nowCubeCatagory][j+2];
+
+            edgeHasVertex[edgeIdx[0]]=1;
+            edgeHasVertex[edgeIdx[1]]=1;
+            edgeHasVertex[edgeIdx[2]]=1;
 
 //            printf("Catagory:%d\n",nowCubeCatagory);
 //            printf("edgeIdx:%d %d %d\n",edgeIdx[0],edgeIdx[1],edgeIdx[2]);
@@ -2073,6 +1995,24 @@ __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
             TriangleBuffer[ nowTriangleBufferStart + j ] = vertexIdx[0];
             TriangleBuffer[ nowTriangleBufferStart + j + 1 ] = vertexIdx[1];
             TriangleBuffer[ nowTriangleBufferStart + j + 2 ] = vertexIdx[2];
+        }
+        int nowFace;
+        int parentNodeId;
+        for(int j=0;j<6;++j){
+            int mark=0;
+            for(int k=0;k<4;++k){
+                mark |= edgeHasVertex[faceEdges[j][k]];
+            }
+            if(mark){
+                parentNodeId=NodeArray[i].parent;
+                nowFace=nowNode.faces[j] - 1;
+                hasSurfaceIntersection[nowFace]=1;
+                while(FaceArray[nowFace].hasParentFace){
+                    nowFace=NodeArray[parentNodeId].faces[j] - 1;
+                    parentNodeId = NodeArray[parentNodeId].parent;
+                    hasSurfaceIntersection[nowFace]=1;
+                }
+            }
         }
     }
 }
@@ -2469,28 +2409,32 @@ int main() {
 
     // generate vertex at maxDepth
     VertexNode *preVertexArray=NULL;
-    nByte=sizeof(VertexNode) * 8 * NodeDNum;
+    nByte=sizeof(VertexNode) * 8 * NodeArray_sz;
     CHECK(cudaMalloc((VertexNode**)&preVertexArray,nByte));
     CHECK(cudaMemset(preVertexArray,0,nByte));
     grid=32;
     block=(32,32);
-    initVertexOwner<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preVertexArray,CenterBuffer);
+    initVertexOwner<<<grid,block>>>(NodeArray,0,NodeArray_sz,
+                                    preVertexArray,
+                                    DepthBuffer,CenterBuffer);
     cudaDeviceSynchronize();
 
     VertexNode *VertexArray=NULL;
-//    nByte=sizeof(VertexNode) * 8 * NodeDNum;
+//    nByte=sizeof(VertexNode) * 8 * NodeArray_sz;
     CHECK(cudaMalloc((VertexNode**)&VertexArray,nByte));
     CHECK(cudaMemset(VertexArray,0,nByte));
     thrust::device_ptr<VertexNode> preVertexArray_ptr=thrust::device_pointer_cast<VertexNode>(preVertexArray);
     thrust::device_ptr<VertexNode> VertexArray_ptr=thrust::device_pointer_cast<VertexNode>(VertexArray);
-    thrust::device_ptr<VertexNode> VertexArray_end=thrust::copy_if(preVertexArray_ptr,preVertexArray_ptr+8*NodeDNum,VertexArray_ptr,validVertex());
+    thrust::device_ptr<VertexNode> VertexArray_end=thrust::copy_if(preVertexArray_ptr,preVertexArray_ptr+8*NodeArray_sz,VertexArray_ptr,validVertex());
     cudaDeviceSynchronize();
 
     cudaFree(preVertexArray);
 
     int VertexArray_sz=VertexArray_end-VertexArray_ptr;
 
-    maintainVertexNodePointerNonAtomic<<<grid,block>>>(VertexArray,VertexArray_sz,NodeArray,CenterBuffer);
+    maintainVertexNodePointerNonAtomic<<<grid,block>>>(VertexArray,VertexArray_sz,
+                                                       NodeArray,
+                                                       DepthBuffer,CenterBuffer);
     cudaDeviceSynchronize();
 
 //    OctNode *a=(OctNode *)malloc(sizeof(OctNode)*NodeArray_sz);
@@ -2534,7 +2478,7 @@ int main() {
     cudaDeviceSynchronize();
 
     EdgeNode *EdgeArray=NULL;
-//    nByte=sizeof(VertexNode) * 8 * NodeDNum;
+//    nByte=sizeof(VertexNode) * 12 * NodeDNum;
     CHECK(cudaMalloc((EdgeNode**)&EdgeArray,nByte));
     CHECK(cudaMemset(EdgeArray,0,nByte));
     thrust::device_ptr<EdgeNode> preEdgeArray_ptr=thrust::device_pointer_cast<EdgeNode>(preEdgeArray);
@@ -2700,7 +2644,8 @@ int main() {
     generateTrianglePos<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
                                         triNums,cubeCatagory,
                                         vexAddress,
-                                        triAddress,TriangleBuffer);
+                                        triAddress,TriangleBuffer,
+                                        FaceArray,hasSurfaceIntersection);
     cudaDeviceSynchronize();
 
     double mid13=cpuSecond();
