@@ -1542,25 +1542,26 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
     }
 }
 
-// use for node at maxDepth
-__global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *preEdgeArray,Point3D<float> *CenterBuffer){
+__global__ void initEdgeArray(OctNode *NodeArray,int left,int right,
+                              EdgeNode *preEdgeArray,
+                              int *DepthBuffer,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     offset+=left;
     int NodeOwnerKey[12];
     int NodeOwnerIdx[12];
-    float halfWidth = 1.0f/(1<<(maxDepth+1));
-    float Width = 1.0f/(1<<(maxDepth));
-    float Widthsq = Width * Width;
     for(int i=offset;i<right;i+=stride){
+        int depth = DepthBuffer[i];
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
         Point3D<float> neighCenter[27];
         int neigh[27];
 #pragma unroll
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[i].neighs[k];
             if(neigh[k] != -1){
-//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
                 neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
@@ -1641,23 +1642,26 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,EdgeNode *pr
 //    printf("thread finish\n");
 }
 
-__global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,OctNode *NodeArray,Point3D<float> *CenterBuffer){
+__global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
+                                        OctNode *NodeArray,
+                                        int *DepthBuffer,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    float halfWidth = 1.0f/(1<<(maxDepth+1));
-    float Width = 1.0f/(1<<(maxDepth));
-    float Widthsq = Width * Width;
     for(int i=offset;i<EdgeArray_sz;i+=stride){
         EdgeNode nowEdge = EdgeArray[i];
         int owner = nowEdge.ownerNodeIdx;
+
+        int depth = DepthBuffer[owner];
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
 
         Point3D<float> neighCenter[27];
         int neigh[27];
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[owner].neighs[k];
             if(neigh[k] != -1){
-//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
                 neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
@@ -2099,14 +2103,14 @@ struct validFace{
 };
 
 __global__ void maintainFaceNodePointer(FaceNode *FaceArray,int FaceArray_sz,
-                                        OctNode *NodeArray, int *BaseAddressArray_d,
-                                        Point3D<float> *CenterBuffer){
+                                        OctNode *NodeArray,
+                                        int *DepthBuffer,Point3D<float> *CenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
     for(int i=offset;i<FaceArray_sz;i+=stride){
         int owner = FaceArray[i].ownerNodeIdx;
-        int depth = getDepth(owner,BaseAddressArray_d);
+        int depth = DepthBuffer[owner];
         float halfWidth = 1.0f/(1<<(depth+1));
         float Width = 1.0f/(1<<depth);
         float Widthsq = Width * Width;
@@ -2407,7 +2411,7 @@ int main() {
 
 
 
-    // generate vertex at maxDepth
+    // generate all depth vertex
     VertexNode *preVertexArray=NULL;
     nByte=sizeof(VertexNode) * 8 * NodeArray_sz;
     CHECK(cudaMalloc((VertexNode**)&preVertexArray,nByte));
@@ -2474,7 +2478,9 @@ int main() {
     CHECK(cudaMalloc((EdgeNode**)&preEdgeArray,nByte));
     CHECK(cudaMemset(preEdgeArray,0,nByte));
 
-    initEdgeArray<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,preEdgeArray,CenterBuffer);
+    initEdgeArray<<<grid,block>>>(NodeArray,BaseAddressArray[maxDepth_h],NodeArray_sz,
+                                  preEdgeArray,
+                                  DepthBuffer,CenterBuffer);
     cudaDeviceSynchronize();
 
     EdgeNode *EdgeArray=NULL;
@@ -2490,7 +2496,9 @@ int main() {
 
     int EdgeArray_sz=EdgeArray_end-EdgeArray_ptr;
 
-    maintainEdgeNodePointer<<<grid,block>>>(EdgeArray,EdgeArray_sz,NodeArray,CenterBuffer);
+    maintainEdgeNodePointer<<<grid,block>>>(EdgeArray,EdgeArray_sz,
+                                            NodeArray,
+                                            DepthBuffer,CenterBuffer);
     cudaDeviceSynchronize();
 
     double mid8=cpuSecond();
@@ -2499,6 +2507,7 @@ int main() {
     // ----------------------------------------------------
 
 
+    // generate all depth face
     FaceNode *preFaceArray=NULL;
     nByte = sizeof(FaceNode) * 6 * NodeArray_sz;
     CHECK(cudaMalloc((FaceNode**)&preFaceArray,nByte));
@@ -2521,8 +2530,8 @@ int main() {
     cudaFree(preFaceArray);
 
     maintainFaceNodePointer<<<grid,block>>>(FaceArray,FaceArray_sz,
-                                            NodeArray,BaseAddressArray_d,
-                                            CenterBuffer);
+                                            NodeArray,
+                                            DepthBuffer,CenterBuffer);
     cudaDeviceSynchronize();
 
     double mid_insert=cpuSecond();
