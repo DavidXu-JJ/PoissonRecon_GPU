@@ -2011,7 +2011,7 @@ __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
                 parentNodeId=NodeArray[i].parent;
                 nowFace=nowNode.faces[j] - 1;
                 hasSurfaceIntersection[nowFace]=1;
-                while(FaceArray[nowFace].hasParentFace){
+                while(FaceArray[nowFace].hasParentFace != -1){
                     nowFace=NodeArray[parentNodeId].faces[j] - 1;
                     parentNodeId = NodeArray[parentNodeId].parent;
                     hasSurfaceIntersection[nowFace]=1;
@@ -2082,12 +2082,12 @@ __global__ void initFaceArray(OctNode *NodeArray,int left,int right,FaceNode *pr
                 preFaceArray[faceIdx].ownerNodeIdx = i;
                 preFaceArray[faceIdx].faceKind = j;
                 if(parent == -1){
-                    preFaceArray[faceIdx].hasParentFace = 0;
+                    preFaceArray[faceIdx].hasParentFace = -1;
                 }else{
                     if(parentFaceKind[sonKey][j] != -1){
                         preFaceArray[faceIdx].hasParentFace = 1;
                     }else{
-                        preFaceArray[faceIdx].hasParentFace = 0;
+                        preFaceArray[faceIdx].hasParentFace = -1;
                     }
                 }
             }
@@ -2098,7 +2098,7 @@ __global__ void initFaceArray(OctNode *NodeArray,int left,int right,FaceNode *pr
 
 struct validFace{
     __device__ bool operator()(const FaceNode &x){
-        return x.ownerNodeIdx != -1;
+        return x.ownerNodeIdx >= 0;
     }
 };
 
@@ -2148,6 +2148,37 @@ __global__ void maintainFaceNodePointer(FaceNode *FaceArray,int FaceArray_sz,
                 NodeArray[neigh[k]].faces[idx] = i+1;
             }
         }
+    }
+}
+
+__global__ void ProcessLeafNodesAtOtherDepth(OctNode *NodeArray,int left,int right,
+                                             VertexNode *VertexArray, float *vvalue,
+                                             int *hasSurfaceIntersection)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        OctNode nowNode = NodeArray[i];
+        int hasTri=0;
+        int sign = (vvalue[nowNode.vertices[0]-1] < 0 )? -1:1;
+        for(int j=1;j<8;++j){
+            if(sign * vvalue[nowNode.vertices[j]-1] < 0) {
+                hasTri=1;
+                break;
+            }
+        }
+        NodeArray[i].hasTriangle=hasTri;
+
+        int hasIntersection=0;
+        for(int j=0;j<6;++j){
+            if(hasSurfaceIntersection[nowNode.faces[j]-1]){
+                hasIntersection=1;
+                break;
+            }
+        }
+        NodeArray[i].hasIntersection=hasIntersection;
     }
 }
 
@@ -2425,7 +2456,7 @@ int main() {
 
     VertexNode *VertexArray=NULL;
 //    nByte=sizeof(VertexNode) * 8 * NodeArray_sz;
-    CHECK(cudaMalloc((VertexNode**)&VertexArray,nByte));
+    CHECK(cudaMallocManaged((VertexNode**)&VertexArray,nByte));
     CHECK(cudaMemset(VertexArray,0,nByte));
     thrust::device_ptr<VertexNode> preVertexArray_ptr=thrust::device_pointer_cast<VertexNode>(preVertexArray);
     thrust::device_ptr<VertexNode> VertexArray_ptr=thrust::device_pointer_cast<VertexNode>(VertexArray);
@@ -2433,6 +2464,9 @@ int main() {
     cudaDeviceSynchronize();
 
     cudaFree(preVertexArray);
+    for(int i=0;i<20;++i){
+        printf("%d owner:%d\n",i,VertexArray[i].ownerNodeIdx);
+    }
 
     int VertexArray_sz=VertexArray_end-VertexArray_ptr;
 
@@ -2519,7 +2553,7 @@ int main() {
     FaceNode *FaceArray = NULL;
 //    nByte = sizeof(FaceNode) * 6 * NodeArray_sz;
     CHECK(cudaMalloc((FaceNode**)&FaceArray,nByte));
-    CHECK(cudaMemset(FaceArray,0,nByte));
+    CHECK(cudaMemset(FaceArray,-1,nByte));
     thrust::device_ptr<FaceNode> preFaceArray_ptr=thrust::device_pointer_cast<FaceNode>(preFaceArray);
     thrust::device_ptr<FaceNode> FaceArray_ptr=thrust::device_pointer_cast<FaceNode>(FaceArray);
     thrust::device_ptr<FaceNode> FaceArray_end=thrust::copy_if(preFaceArray_ptr,preFaceArray_ptr+6*NodeArray_sz,FaceArray_ptr,validFace());
@@ -2660,7 +2694,12 @@ int main() {
     double mid13=cpuSecond();
     printf("Process Triangle indices takes:%lfs\n",mid13-mid12);
 
+    // ----------------------------------------------------
 
+    ProcessLeafNodesAtOtherDepth<<<grid,block>>>(NodeArray,0,BaseAddressArray[maxDepth_h],
+                                                 VertexArray,vvalue,
+                                                 hasSurfaceIntersection);
+    cudaDeviceSynchronize();
 
 //    nByte = sizeof(int) * 3 * allTriNums;
 
