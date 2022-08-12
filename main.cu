@@ -2182,6 +2182,12 @@ __global__ void ProcessLeafNodesAtOtherDepth(OctNode *NodeArray,int left,int rig
     }
 }
 
+struct ifSubdivide{
+    __device__ bool operator()(const OctNode &x){
+        return (x.children[0] == -1) && (x.hasTriangle || x.hasIntersection);
+    }
+};
+
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
 //    char outName[]="/home/davidxu/horse.ply";
@@ -2456,7 +2462,7 @@ int main() {
 
     VertexNode *VertexArray=NULL;
 //    nByte=sizeof(VertexNode) * 8 * NodeArray_sz;
-    CHECK(cudaMallocManaged((VertexNode**)&VertexArray,nByte));
+    CHECK(cudaMalloc((VertexNode**)&VertexArray,nByte));
     CHECK(cudaMemset(VertexArray,0,nByte));
     thrust::device_ptr<VertexNode> preVertexArray_ptr=thrust::device_pointer_cast<VertexNode>(preVertexArray);
     thrust::device_ptr<VertexNode> VertexArray_ptr=thrust::device_pointer_cast<VertexNode>(VertexArray);
@@ -2464,9 +2470,6 @@ int main() {
     cudaDeviceSynchronize();
 
     cudaFree(preVertexArray);
-    for(int i=0;i<20;++i){
-        printf("%d owner:%d\n",i,VertexArray[i].ownerNodeIdx);
-    }
 
     int VertexArray_sz=VertexArray_end-VertexArray_ptr;
 
@@ -2700,6 +2703,19 @@ int main() {
                                                  VertexArray,vvalue,
                                                  hasSurfaceIntersection);
     cudaDeviceSynchronize();
+
+    OctNode *SubdivideNode=NULL;
+    nByte = sizeof(OctNode) * BaseAddressArray[maxDepth_h];
+    CHECK(cudaMalloc((OctNode**)&SubdivideNode,nByte));
+    CHECK(cudaMemset(SubdivideNode,0,nByte));
+    thrust::device_ptr<OctNode> NodeArray_ptr=thrust::device_pointer_cast<OctNode>(NodeArray);
+    thrust::device_ptr<OctNode> SubdivideNode_ptr=thrust::device_pointer_cast<OctNode>(SubdivideNode);
+    thrust::device_ptr<OctNode> SubdivideNode_end=thrust::copy_if(NodeArray_ptr,NodeArray_ptr+BaseAddressArray[maxDepth_h],SubdivideNode_ptr,ifSubdivide());
+    cudaDeviceSynchronize();
+
+    int SubdivideNum = SubdivideNode_end - SubdivideNode_ptr;
+
+    printf("SubdivideNum:%d\n",SubdivideNum);
 
 //    nByte = sizeof(int) * 3 * allTriNums;
 
