@@ -1895,29 +1895,32 @@ __global__ void generateVexNums(EdgeNode *EdgeArray,int EdgeArray_sz,
         int owner=nowEdge.ownerNodeIdx;
         int kind=nowEdge.edgeKind;
         int orientation=kind>>2;
-        int off[2];
-        off[0]=kind&1;
-        off[1]=(kind&2)>>1;
+//        int off[2];
+//        off[0]=kind&1;
+//        off[1]=(kind&2)>>1;
         int idx[2];
-        switch (orientation) {
-            case 0:
-                idx[0]= VertexIndex(0,off[0],off[1]);
-                idx[1]= VertexIndex(1,off[0],off[1]);
-                break;
-            case 1:
-                idx[0]= VertexIndex(off[0],0,off[1]);
-                idx[1]= VertexIndex(off[0],1,off[1]);
-                break;
-            case 2:
-                idx[0]= VertexIndex(off[0],off[1],0);
-                idx[1]= VertexIndex(off[0],off[1],1);
-                break;
-            default:
-                printf("error\n");
-        }
-        OctNode ownerNode=NodeArray[owner];
-        int v1=ownerNode.vertices[idx[0]]-1;
-        int v2=ownerNode.vertices[idx[1]]-1;
+//        switch (orientation) {
+//            case 0:
+//                idx[0]= VertexIndex(0,off[0],off[1]);
+//                idx[1]= VertexIndex(1,off[0],off[1]);
+//                break;
+//            case 1:
+//                idx[0]= VertexIndex(off[0],0,off[1]);
+//                idx[1]= VertexIndex(off[0],1,off[1]);
+//                break;
+//            case 2:
+//                idx[0]= VertexIndex(off[0],off[1],0);
+//                idx[1]= VertexIndex(off[0],off[1],1);
+//                break;
+//            default:
+//                printf("error\n");
+//        }
+        idx[0]=edgeVertex[kind][0];
+        idx[1]=edgeVertex[kind][1];
+
+//        OctNode ownerNode=NodeArray[owner];
+        int v1=NodeArray[owner].vertices[idx[0]]-1;
+        int v2=NodeArray[owner].vertices[idx[1]]-1;
         if(vvalue[v1]*vvalue[v2]<=0){
             vexNums[i]=1;
         }
@@ -1977,9 +1980,11 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
             int owner=EdgeArray[i].ownerNodeIdx;
             int kind=EdgeArray[i].edgeKind;
             int orientation=kind>>2;
-            int off[2];
-            off[0]=kind&1;
-            off[1]=(kind&2)>>1;
+
+//            int off[2];
+//            off[0]=kind&1;
+//            off[1]=(kind&2)>>1;
+
             int idx[2];
 
 //            int xyz[6];
@@ -1997,22 +2002,25 @@ __global__ void generateIntersectionPoint(EdgeNode *EdgeArray,int EdgeArray_sz,
 //            idx[0] = VertexIndex(xyz[0],xyz[1],xyz[2]);
 //            idx[1] = VertexIndex(xyz[3],xyz[4],xyz[5]);
 
-            switch (orientation) {
-                case 0:
-                    idx[0]= VertexIndex(0,off[0],off[1]);
-                    idx[1]= VertexIndex(1,off[0],off[1]);
-                    break;
-                case 1:
-                    idx[0]= VertexIndex(off[0],0,off[1]);
-                    idx[1]= VertexIndex(off[0],1,off[1]);
-                    break;
-                case 2:
-                    idx[0]= VertexIndex(off[0],off[1],0);
-                    idx[1]= VertexIndex(off[0],off[1],1);
-                    break;
-                default:
-                    printf("error\n");
-            }
+//            switch (orientation) {
+//                case 0:
+//                    idx[0]= VertexIndex(0,off[0],off[1]);
+//                    idx[1]= VertexIndex(1,off[0],off[1]);
+//                    break;
+//                case 1:
+//                    idx[0]= VertexIndex(off[0],0,off[1]);
+//                    idx[1]= VertexIndex(off[0],1,off[1]);
+//                    break;
+//                case 2:
+//                    idx[0]= VertexIndex(off[0],off[1],0);
+//                    idx[1]= VertexIndex(off[0],off[1],1);
+//                    break;
+//                default:
+//                    printf("error\n");
+//            }
+            idx[0]=edgeVertex[kind][0];
+            idx[1]=edgeVertex[kind][1];
+
             int v1=NodeArray[owner].vertices[idx[0]]-1;
             int v2=NodeArray[owner].vertices[idx[1]]-1;
             Point3D<float> p1=VertexArray[v1].pos,p2=VertexArray[v2].pos;
@@ -2066,6 +2074,35 @@ __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
             TriangleBuffer[ nowTriangleBufferStart + j + 1 ] = vertexIdx[1];
             TriangleBuffer[ nowTriangleBufferStart + j + 2 ] = vertexIdx[2];
         }
+    }
+}
+
+__global__ void initFaceArray(OctNode *NodeArray,int left,int right,FaceNode *preFaceArray,int *DepthBuffer,Point3D<float> *CenterBuffer){
+
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    int NodeOwnerKey[6];
+    int NodeOwnerIdx[6];
+    for(int i=offset;i<right;i+=stride){
+        int nowDepth = DepthBuffer[i];
+        float halfWidth = 1.0f/(1<<(nowDepth+1));
+        float Width = 1.0f/(1<<nowDepth);
+        float Widthsq = Width * Width;
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+#pragma unroll
+        for(int k=0;k<27;++k){
+            neigh[k]=NodeArray[i].neighs[k];
+            if(neigh[k] != -1){
+                neighCenter[k]=CenterBuffer[neigh[k]];
+            }
+        }
+        const Point3D<float> &nodeCenter = neighCenter[13];
+
+        Point3D<float> faceCenterPos[6];
+
     }
 }
 
@@ -2529,6 +2566,14 @@ int main() {
 
     double mid13=cpuSecond();
     printf("Process Triangle indices takes:%lfs\n",mid13-mid12);
+
+
+//    FaceNode *preFaceArray=NULL;
+//    nByte = sizeof(FaceNode) * NodeArray_sz;
+//    CHECK(cudaMalloc((FaceNode**)&preFaceArray,nByte));
+//    CHECK(cudaMemset(preFaceArray,0,nByte));
+//
+//    initFaceArray<<<grid,block>>>
 
 //    nByte = sizeof(int) * 3 * allTriNums;
 

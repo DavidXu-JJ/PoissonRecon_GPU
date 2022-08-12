@@ -690,6 +690,21 @@ __constant__ int trianglesCount[1<<Cube::CORNERS] = {
         2,1,1,0
 };
 
+__constant__ int edgeVertex[12][2]={
+        {0,1},
+        {2,3},
+        {4,5},
+        {6,7},
+        {0,3},
+        {1,2},
+        {4,7},
+        {5,6},
+        {0,4},
+        {1,5},
+        {3,7},
+        {2,6}
+};
+
 
 
 #endif //GPU_POISSONRECON_MARCHINGCUBES_CUH

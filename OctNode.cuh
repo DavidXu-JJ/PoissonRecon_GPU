@@ -49,4 +49,12 @@ public:
     int nodes[4];
 };
 
+class FaceNode{
+public:
+    int faceKind;
+    int ownerNodeIdx;
+    int fatherFaceIdx;
+    int nodes[2];
+};
+
 #endif //GPU_POISSONRECON_OCTNODE_CUH
