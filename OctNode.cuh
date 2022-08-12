@@ -30,6 +30,9 @@ public:
     // (real idx) + 1
     // idx start from (0 + 1)
     int faces[6];
+
+    int hasTriangle;
+    int hasIntersection;
 };
 
 class VertexNode{
