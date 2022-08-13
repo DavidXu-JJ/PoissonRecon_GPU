@@ -39,6 +39,8 @@ class VertexNode{
 public:
     Point3D<float> pos;
     int ownerNodeIdx;
+    int vertexKind;
+    int depth;
     // encode the nodes?
     int nodes[8];
 };

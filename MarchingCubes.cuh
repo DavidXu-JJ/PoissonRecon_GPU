@@ -717,6 +717,11 @@ __constant__ int parentFaceKind[8][6]={
 };
 
 
+// [vertexId] -> next children Key
+__constant__ int childrenVertexKind[8]={
+        0,1,3,2,4,5,7,6
+};
+
 __constant__ int faceVertexs[6][4]={
         {0,3,4,7},
         {1,2,5,6},

@@ -1474,6 +1474,8 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,
                 preVertexArray[vertexIdx].pos.coords[0] = vertexPos[j].coords[0] ;
                 preVertexArray[vertexIdx].pos.coords[1] = vertexPos[j].coords[1] ;
                 preVertexArray[vertexIdx].pos.coords[2] = vertexPos[j].coords[2] ;
+                preVertexArray[vertexIdx].vertexKind = j;
+                preVertexArray[vertexIdx].depth = depth;
 //                if(abs(vertexPos[j].coords[0])<EPSILON ||
 //                   abs(vertexPos[j].coords[1])<EPSILON ||
 //                   abs(vertexPos[j].coords[2])<EPSILON)
@@ -1754,16 +1756,15 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
     int decode_offset2=(1<<(2*(maxD+1)));
     for(int i=offset;i<VertexArray_sz;i+=stride){
         VertexNode nowVertex = VertexArray[i];
-//        Point3D<float> vertexPos = nowVertex.pos;
+        int depth = nowVertex.depth;
         float val=0.0f;
+        int exceedChildrenId = childrenVertexKind[nowVertex.vertexKind];
         int nowNode = nowVertex.ownerNodeIdx;
         if(nowNode>0){
             while(nowNode != -1){
                 for(int k=0;k<27;++k){
                     int neigh = NodeArray[nowNode].neighs[k];
                     if(neigh != -1){
-
-
                         int idxO[3];
                         int encode_idx=EncodedNodeIdxInFunction[neigh];
                         idxO[0]=encode_idx%decode_offset1;
@@ -1781,6 +1782,30 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
                     }
                 }
                 nowNode = NodeArray[nowNode].parent;
+            }
+            nowNode = nowVertex.ownerNodeIdx;
+            while(depth < maxDepth){
+                ++depth;
+                nowNode = NodeArray[nowNode].children[exceedChildrenId];
+                if(nowNode == -1) break;
+                for(int k=0;k<27;++k){
+                    int neigh = NodeArray[nowNode].neighs[k];
+                    if(neigh != -1){
+                        int idxO[3];
+                        int encode_idx=EncodedNodeIdxInFunction[neigh];
+                        idxO[0]=encode_idx%decode_offset1;
+                        idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+                        idxO[2]=encode_idx/decode_offset2;
+
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
+
+                        val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
+                               * value(funcY,nowVertex.pos.coords[1])
+                               * value(funcZ,nowVertex.pos.coords[2]);
+                    }
+                }
             }
         }else break;
         vvalue[i]=val-isoValue;
@@ -2187,6 +2212,81 @@ struct ifSubdivide{
         return (x.children[0] == -1) && (x.hasTriangle || x.hasIntersection);
     }
 };
+
+//__global__ void precomputeSubdivideDepth(OctNode *SubdivideNode,int SubdivideNum,
+//                                         int *DepthBuffer,
+//                                         int *SubdivideDepthBuffer)
+//{
+//    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+//    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+//    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+//    for(int i=offset;i<SubdivideNum;i+=stride){
+//        int nowNodeId = SubdivideNode[i].neighs[13];
+//        SubdivideDepthBuffer[i] = DepthBuffer[nowNodeId];
+//    }
+//}
+//
+//__global__ void initFixedDepthNums(OctNode *SubdivideNode,int SubdivideNum,
+//                                   int *SubdivideDepthBuffer,
+//                                   int *fixedDepthNums)
+//{
+//    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+//    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+//    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+//    for(int i=offset;i<SubdivideNum;i+=stride) {
+//        int nodeNum=1;
+//        for(int depth=SubdivideDepthBuffer[i];depth <= maxDepth;++depth){
+//            fixedDepthNums[ (depth-1) * SubdivideNum + i] = nodeNum;
+////            nodeNum *= 8;
+//            nodeNum <<= 3;
+//        }
+//    }
+//}
+//
+//__global__ void rebuildArray(OctNode *SubdivideNode,int SubdivideNum,
+//                             OctNode *NodeArray,int NodeArray_sz,
+//                             int *SubdivideDepthBuffer,
+//                             int *depthNodeAddress_d,int *fixedDepthAddress,
+//                             OctNode *RebuildArray)
+//{
+//    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+//    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+//    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+//    int depthNodeAddress[maxDepth+1];
+//    for(int i=0;i<=maxDepth;++i){
+//        depthNodeAddress[i]=depthNodeAddress_d[i];
+//    }
+//    for(int i=offset;i<SubdivideNum;i+=stride){
+//        int nowDepth = SubdivideDepthBuffer[i];
+//        int fixedDepthOffset = fixedDepthAddress[(nowDepth-1) * SubdivideNum + i];
+//        int nowIdx = depthNodeAddress[nowDepth] + fixedDepthOffset;
+//        OctNode rootNode = SubdivideNode[i];
+//        RebuildArray[nowIdx] = rootNode;
+//        int sonKey = ( rootNode.key >> (3 * (maxDepth-nowDepth)) ) & 7;
+//        NodeArray[rootNode.parent].children[sonKey] = NodeArray_sz + nowIdx;
+//        int parentNodeIdx;
+//        int childrenNums=8;
+//        while(nowDepth <= maxDepth) {
+//            ++nowDepth;
+//            fixedDepthOffset = fixedDepthAddress[(nowDepth - 1) * SubdivideNum + i];
+//            nowIdx = depthNodeAddress[nowDepth] + fixedDepthOffset;
+//            for (int j = 0; j < childrenNums; j+=8) {
+//                parentNodeIdx = depthNodeAddress[nowDepth-1] + (fixedDepthOffset+j)/8;
+//                int parentGlobalIdx=RebuildArray[parentNodeIdx].neighs[13];
+//                int parentKey=RebuildArray[parentNodeIdx].key;
+//                for(int k=0;k<8;++k){
+//                    int thisRoundIdx = nowIdx + j + k;
+//                    RebuildArray[thisRoundIdx].parent = parentGlobalIdx;
+//                    RebuildArray[thisRoundIdx].key = parentKey | (j << (3 * (maxDepth - nowDepth)));
+//                    RebuildArray[thisRoundIdx].neighs[13] = NodeArray_sz + thisRoundIdx;
+//                    RebuildArray[parentNodeIdx].children[k] = NodeArray_sz + thisRoundIdx;
+//                }
+//            }
+//            childrenNums<<=3;
+//        }
+//    }
+//
+//}
 
 int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
@@ -2716,6 +2816,72 @@ int main() {
     int SubdivideNum = SubdivideNode_end - SubdivideNode_ptr;
 
     printf("SubdivideNum:%d\n",SubdivideNum);
+
+//    int *SubdivideDepthBuffer=NULL;
+//    nByte = sizeof(int) * SubdivideNum;
+//    CHECK(cudaMallocManaged((int**)&SubdivideDepthBuffer,nByte));
+//
+//    precomputeSubdivideDepth<<<grid,block>>>(SubdivideNode,SubdivideNum,
+//                                             DepthBuffer,
+//                                             SubdivideDepthBuffer);
+//    cudaDeviceSynchronize();
+//
+//    for(int i=0;i<100;++i){
+//        printf("%d depth:%d\n",i,SubdivideDepthBuffer[i]);
+//    }
+//
+//    // It's impossible that depth 0 node need to be subdivided.
+//    int *fixedDepthNums=NULL;
+//    nByte = sizeof(int) * SubdivideNum * maxDepth_h;
+//    CHECK(cudaMalloc((int **)&fixedDepthNums,nByte));
+//    CHECK(cudaMemset(fixedDepthNums,0,nByte));
+//
+//    initFixedDepthNums<<<grid,block>>>(SubdivideNode,SubdivideNum,
+//                                       SubdivideDepthBuffer,
+//                                       fixedDepthNums);
+//    cudaDeviceSynchronize();
+//
+//    thrust::device_ptr<int> fixedDepthNums_ptr=thrust::device_pointer_cast<int>(fixedDepthNums);
+//    int rebuildNums=thrust::reduce(fixedDepthNums_ptr,fixedDepthNums_ptr+SubdivideNum * maxDepth_h);
+//
+//    int depthNodeCount[maxDepth_h+1];
+//    depthNodeCount[0]=0;
+//    for(int depth=1;depth<=maxDepth_h;++depth){
+//        depthNodeCount[depth]=thrust::reduce(fixedDepthNums_ptr+(depth-1)*SubdivideNum,fixedDepthNums_ptr+depth*SubdivideNum);
+//    }
+//    cudaDeviceSynchronize();
+//
+//    int depthNodeAddress[maxDepth_h+1];
+//    depthNodeAddress[0]=0;
+//    for(int depth=1;depth<=maxDepth_h;++depth){
+//        depthNodeAddress[depth] = depthNodeAddress[depth-1] + depthNodeCount[depth-1];
+//    }
+//
+//    int *depthNodeAddress_d=NULL;
+//    nByte = sizeof(int) * (maxDepth_h+1);
+//    CHECK(cudaMalloc((int**)&depthNodeAddress_d,nByte));
+//    CHECK(cudaMemcpy(depthNodeAddress_d,depthNodeAddress,nByte,cudaMemcpyHostToDevice));
+//
+//    int *fixedDepthAddress=NULL;
+//    nByte = sizeof(int) * SubdivideNum * maxDepth_h;
+//    CHECK(cudaMalloc((int**)&fixedDepthAddress,nByte));
+//    CHECK(cudaMemset(fixedDepthAddress,0,nByte));
+//    for(int depth=1;depth<=maxDepth_h;++depth){
+//        thrust::device_ptr<int> fixedDepthAddress_ptr=thrust::device_pointer_cast<int>(fixedDepthAddress+(depth-1)*SubdivideNum);
+//        thrust::exclusive_scan(fixedDepthNums_ptr+(depth-1)*SubdivideNum,fixedDepthNums_ptr+depth*SubdivideNum,fixedDepthAddress_ptr);
+//        cudaDeviceSynchronize();
+//    }
+//
+//    OctNode *RebuildArray=NULL;
+//    nByte = sizeof(OctNode) * rebuildNums;
+//    CHECK(cudaMalloc((OctNode**)&RebuildArray,nByte));
+//    CHECK(cudaMemset(RebuildArray,0,nByte));
+//
+//    rebuildArray<<<grid,block>>>(SubdivideNode,SubdivideNum,
+//                                 NodeArray,NodeArray_sz,
+//                                 SubdivideDepthBuffer,
+//                                 depthNodeAddress_d,fixedDepthAddress,
+//                                 RebuildArray);
 
 //    nByte = sizeof(int) * 3 * allTriNums;
 
