@@ -1869,6 +1869,78 @@ __global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
     }
 }
 
+// only use for edge at maxDepth
+__global__ void maintainSubdivideEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
+                                                 OctNode *NodeArray,int NodeArray_sz,
+                                                 OctNode *SubdivideArray,
+                                                 Point3D<float> *CenterBuffer,
+                                                 Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<EdgeArray_sz;i+=stride){
+        EdgeNode nowEdge = EdgeArray[i];
+        int owner = nowEdge.ownerNodeIdx;
+
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+        for(int k=0;k<27;++k){
+            neigh[k]=SubdivideArray[owner - NodeArray_sz].neighs[k];
+            if(neigh[k] != -1){
+                if(neigh[k] < NodeArray_sz)
+                    neighCenter[k]=CenterBuffer[neigh[k]];
+                else
+                    neighCenter[k]=SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+            }
+        }
+
+        const Point3D<float> &nodeCenter = neighCenter[13];
+        Point3D<float> edgeCenterPos;
+        int multi[3];
+        int dim=0;
+        int orientation = nowEdge.edgeKind>>2;
+        int off[2];
+        off[0] = nowEdge.edgeKind & 1;
+        off[1] = (nowEdge.edgeKind & 2)>>1;
+        for(int k=0;k<3;++k){
+            if(orientation==k){
+                multi[k]=0;
+            }else{
+                multi[k]=(2 * off[dim] - 1);
+                ++dim;
+            }
+        }
+        edgeCenterPos.coords[0] = nodeCenter.coords[0] + multi[0] * halfWidth;
+        edgeCenterPos.coords[1] = nodeCenter.coords[1] + multi[1] * halfWidth;
+        edgeCenterPos.coords[2] = nodeCenter.coords[2] + multi[2] * halfWidth;
+
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(edgeCenterPos,neighCenter[k]) < Widthsq){
+                EdgeArray[i].nodes[cnt] = neigh[k];
+                ++cnt;
+                int idx=orientation<<2;
+                int dim=0;
+                for(int j=0;j<3;++j){
+                    if(orientation!=j){
+                        if(neighCenter[k].coords[j]-edgeCenterPos.coords[j] < 0) idx |= (1<<dim);
+                        ++dim;
+                    }
+                }
+                if(neigh[k] < NodeArray_sz)
+                    NodeArray[neigh[k]].edges[idx] = i+1;
+                else
+                    SubdivideArray[neigh[k] - NodeArray_sz].edges[idx] = i+1;
+            }
+        }
+    }
+}
+
 
 struct validEdge{
     __device__ bool operator()(const EdgeNode &x){
@@ -3270,6 +3342,15 @@ int main() {
 
         cudaFree(SubdividePreEdgeArray);
 
+        int SubdivideEdgeArray_sz = SubdivideEdgeArray_end - SubdivideEdgeArray_ptr;
+
+        maintainSubdivideEdgeNodePointer<<<grid,block>>>(SubdivideEdgeArray,SubdivideEdgeArray_sz,
+                                                         NodeArray,NodeArray_sz,
+                                                         SubdivideArray,
+                                                         CenterBuffer,
+                                                         SubdivideArrayCenterBuffer);
+        cudaDeviceSynchronize();
+
 //        for(int j=0;j<15;++j){
 //            printf("%d owner:%d\n",j,SubdivideEdgeArray[i].ownerNodeIdx);
 //        }
@@ -3297,6 +3378,10 @@ int main() {
 //            std::cout << std::endl;
 //            for(int k=0;k<8;++k){
 //                std::cout << "vertices["<<k<<"]:"<<SubdivideArray[j].vertices[k]<<" ";
+//            }
+//            std::cout << std::endl;
+//            for(int k=0;k<12;++k){
+//                std::cout << "edges["<<k<<"]:"<<SubdivideArray[j].edges[k]<<" ";
 //            }
 //            std::cout << std::endl;
 //        }
