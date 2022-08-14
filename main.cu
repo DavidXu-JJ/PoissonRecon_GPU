@@ -1427,23 +1427,14 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,
         float Widthsq = Width * Width;
         Point3D<float> neighCenter[27];
         int neigh[27];
-//        int empty=0;
 #pragma unroll
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[i].neighs[k];
             if(neigh[k] != -1){
                 neighCenter[k]=CenterBuffer[neigh[k]];
             }
-//            else empty++;
         }
         const Point3D<float> &nodeCenter = neighCenter[13];
-
-//        if(!empty){
-//            printf("children[%d]:\n",NodeArray[i].key&7);
-//            for(int k=0;k<27;++k){
-//                printf("distance[%d]:%f\n",k,SquareDistance(nodeCenter,neighCenter[k])/Widthsq);
-//            }
-//        }
 
         Point3D<float> vertexPos[8];
 #pragma unroll
@@ -1457,10 +1448,8 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,
         for(int j=0;j<8;++j)
             NodeOwnerKey[j]=0x7fffffff;
         for(int j=0;j<8;++j){
-//            int cnt=0;
             for(int k=0;k<27;++k){
                 if(neigh[k] != -1 && SquareDistance(vertexPos[j],neighCenter[k]) < Widthsq){
-//                    ++cnt;
                     int neighKey=NodeArray[neigh[k]].key;
                     if(NodeOwnerKey[j]>neighKey){
                         NodeOwnerKey[j]=neighKey;
@@ -1468,7 +1457,6 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,
                     }
                 }
             }
-//            printf("cnt:%d\n",cnt);
         }
 #pragma unroll
         for(int j=0;j<8;++j) {
@@ -1480,11 +1468,79 @@ __global__ void initVertexOwner(OctNode *NodeArray,int left,int right,
                 preVertexArray[vertexIdx].pos.coords[2] = vertexPos[j].coords[2] ;
                 preVertexArray[vertexIdx].vertexKind = j;
                 preVertexArray[vertexIdx].depth = depth;
-//                if(abs(vertexPos[j].coords[0])<EPSILON ||
-//                   abs(vertexPos[j].coords[1])<EPSILON ||
-//                   abs(vertexPos[j].coords[2])<EPSILON)
-//                    printf("error\n");
-//                printf("vertexPos:%f %f %f\n",vertexPos[j].coords[0],vertexPos[j].coords[1],vertexPos[j].coords[2]);
+            }
+        }
+    }
+}
+
+// only process vertex at maxDepth
+__global__ void initSubdivideVertexOwner(OctNode *NodeArray,int NodeArray_sz,
+                                         OctNode *SubdivideArray,int left,int right,
+                                         VertexNode *SubdividePreVertexArray,
+                                         int *DepthBuffer,Point3D<float> *CenterBuffer,
+                                         int *SubdivideArrayDepthBuffer,Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    int NodeOwnerKey[8];
+    int NodeOwnerIdx[8];
+    for(int i=offset;i<right;i+=stride){
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+#pragma unroll
+        for(int k=0;k<27;++k){
+            neigh[k]=SubdivideArray[i].neighs[k];
+            if(neigh[k] != -1){
+                if(neigh[k] < NodeArray_sz) {
+                    neighCenter[k] = CenterBuffer[neigh[k]];
+                }else{
+                    neighCenter[k] = SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+                }
+            }
+        }
+        const Point3D<float> &nodeCenter = neighCenter[13];
+
+        Point3D<float> vertexPos[8];
+#pragma unroll
+        for(int j=0;j<8;++j) {
+            vertexPos[j].coords[0] = nodeCenter.coords[0] + (2 * (j & 1) - 1) * halfWidth;
+            vertexPos[j].coords[1] = nodeCenter.coords[1] + (2 * ((j & 2) >> 1) - 1) * halfWidth;
+            vertexPos[j].coords[2] = nodeCenter.coords[2] + (2 * ((j & 4) >> 2) - 1) * halfWidth;
+        }
+
+#pragma unroll
+        for(int j=0;j<8;++j)
+            NodeOwnerKey[j]=0x7fffffff;
+        for(int j=0;j<8;++j){
+            for(int k=0;k<27;++k){
+                if(neigh[k] != -1 && SquareDistance(vertexPos[j],neighCenter[k]) < Widthsq){
+                    int neighKey;
+                    if(neigh[k] < NodeArray_sz)
+                        neighKey=NodeArray[neigh[k]].key;
+                    else
+                        neighKey=SubdivideArray[neigh[k]-NodeArray_sz].key;
+                    if(NodeOwnerKey[j]>neighKey){
+                        NodeOwnerKey[j]=neighKey;
+                        NodeOwnerIdx[j]=neigh[k];
+                    }
+                }
+            }
+        }
+#pragma unroll
+        for(int j=0;j<8;++j) {
+            if(NodeOwnerIdx[j] == NodeArray_sz + i) {
+                int vertexIdx = 8 * (i - left) + j;
+                SubdividePreVertexArray[vertexIdx].ownerNodeIdx = NodeOwnerIdx[j];
+                SubdividePreVertexArray[vertexIdx].pos.coords[0] = vertexPos[j].coords[0] ;
+                SubdividePreVertexArray[vertexIdx].pos.coords[1] = vertexPos[j].coords[1] ;
+                SubdividePreVertexArray[vertexIdx].pos.coords[2] = vertexPos[j].coords[2] ;
+                SubdividePreVertexArray[vertexIdx].vertexKind = j;
+                SubdividePreVertexArray[vertexIdx].depth = depth;
             }
         }
     }
@@ -1511,16 +1567,10 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
         Point3D<float> neighCenter[27];
         Point3D<float> vertexPos=VertexArray[i].pos;
 
-//        if(abs(vertexPos.coords[0])<EPSILON ||
-//           abs(vertexPos.coords[1])<EPSILON ||
-//           abs(vertexPos.coords[2])<EPSILON)
-//            printf("error\n");
-
         int neigh[27];
         for(int k=0;k<27;++k){
             neigh[k]=NodeArray[owner].neighs[k];
             if(neigh[k] != -1){
-//                getNodeCenter(NodeArray[neigh[k]].key,neighCenter[k]);
                 neighCenter[k]=CenterBuffer[neigh[k]];
             }
         }
@@ -1542,9 +1592,63 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
                 NodeArray[neigh[k]].vertices[idx] = i+1;
             }
         }
-//        if(cnt>8){
-//            printf("error\n");
-//        }
+    }
+}
+
+// process only the maxDepth subdivide node
+__global__ void maintainSubdivideVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,
+                                                   OctNode *NodeArray,int NodeArray_sz,
+                                                   OctNode *SubdivideArray,
+                                                   Point3D<float> *CenterBuffer,
+                                                   Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<VertexArray_sz;i+=stride){
+        int owner=VertexArray[i].ownerNodeIdx;
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+        Point3D<float> neighCenter[27];
+        Point3D<float> vertexPos=VertexArray[i].pos;
+
+        int neigh[27];
+        for (int k = 0; k < 27; ++k) {
+            neigh[k]=SubdivideArray[owner-NodeArray_sz].neighs[k];
+        }
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1){
+                if(neigh[k] < NodeArray_sz) {
+                    neighCenter[k] = CenterBuffer[neigh[k]];
+                } else{
+                    neighCenter[k] = SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+                }
+            }
+        }
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(vertexPos,neighCenter[k]) < Widthsq){
+                VertexArray[i].nodes[cnt]=neigh[k];
+                ++cnt;
+                int idx=0;
+                if(neighCenter[k].coords[0]-vertexPos.coords[0] < 0) idx|=1;
+                if(neighCenter[k].coords[2]-vertexPos.coords[2] < 0) idx|=4;
+                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) {
+                    if(idx & 1){
+                        idx+=1;
+                    }else{
+                        idx+=3;
+                    }
+                }
+//                printf("%d %d %d\n",i,neigh[k],neigh[k]-NodeArray_sz);
+                if(neigh[k] < NodeArray_sz) {
+                    NodeArray[neigh[k]].vertices[idx] = i + 1;
+                }else{
+                    SubdivideArray[neigh[k] - NodeArray_sz].vertices[idx] = i + 1;
+                }
+            }
+        }
     }
 }
 
@@ -2320,7 +2424,6 @@ __global__ void singleRebuildArray(int NodeArray_sz,
     int rootDepth = SubdivideDepthBuffer[iterRound];
     int rootKey = SubdivideNode[iterRound].key;
     for(int i=offset;i<SubdivideArray_sz;i+=stride){
-//        int thisNodeDepth = int(log(i*7+1)/log(8));
         int thisNodeDepth = getSubdivideDepth(rootDepth,i);
         int relativeDepth = thisNodeDepth - rootDepth;
         int idxOffset = i - (qpow(8,relativeDepth)-1)/7;
@@ -2342,10 +2445,7 @@ __global__ void singleRebuildArray(int NodeArray_sz,
         }
 
         int thisKey = rootKey;
-        for(int j=thisNodeDepth;j>rootDepth;--j){
-            thisKey |= (idxOffset & 7) << (3 * (maxDepth-thisNodeDepth));
-            idxOffset>>=3;
-        }
+        thisKey |= (idxOffset) << (3 * (maxDepth-thisNodeDepth));
         SubdivideArray[i].key = thisKey;
 
         SubdivideArrayDepthBuffer[i] = thisNodeDepth;
@@ -2974,13 +3074,10 @@ int main() {
                                              SubdivideDepthBuffer);
     cudaDeviceSynchronize();
 
-    cudaFree(DepthBuffer);
-    cudaFree(CenterBuffer);
-
     for(int i=0;i<SubdivideNum;++i){
         int rootDepth = SubdivideDepthBuffer[i];
         int SubdivideArray_sz = (qpow(8,(maxDepth_h-rootDepth+1) )-1 )/7;
-        int fixedDepthNodeNum[maxDepth+1];
+        int fixedDepthNodeNum[maxDepth+1]={0};
         int nowNodeNum=1;
         fixedDepthNodeNum[rootDepth-1]=0;
         for(int j=rootDepth;j<=maxDepth_h;++j){
@@ -3035,7 +3132,22 @@ int main() {
 
         }
 
+
+        // preVertexArray
+        VertexNode *SubdividePreVertexArray = NULL;
+        nByte = sizeof(VertexNode) * 8 * fixedDepthNodeNum[maxDepth_h];
+        CHECK(cudaMalloc((VertexNode**)&SubdividePreVertexArray,nByte));
+        CHECK(cudaMemset(SubdividePreVertexArray,0,nByte));
+
+        initSubdivideVertexOwner<<<grid,block>>>(NodeArray,NodeArray_sz,
+                                                 SubdivideArray,fixedDepthNodeAddress[maxDepth_h],SubdivideArray_sz,
+                                                 SubdividePreVertexArray,
+                                                 DepthBuffer,CenterBuffer,
+                                                 SubdivideArrayDepthBuffer,SubdivideArrayCenterBuffer);
+        cudaDeviceSynchronize();
+
 //        for (int j = 0; j < 10; ++j) {
+//            std::cout << j<<std::endl;
 //            std::cout << std::bitset<32>(SubdivideArray[j].key) << " parent:" << SubdivideArray[j].parent
 //                      << std::endl;
 //            for (int k = 0; k < 8; ++k) {
@@ -3043,23 +3155,69 @@ int main() {
 //            }
 //            std::cout << std::endl;
 //            for (int k = 0; k < 27; ++k) {
-//                std::cout << "neigh[" << k << "]" << SubdivideArray[j].neighs[k] << " ";
+//                std::cout << "neigh:[" << k << "]" << SubdivideArray[j].neighs[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for (int k = 0; k < 8; ++k) {
+//                std::cout << "vertices:[" << k << "]" << SubdivideArray[i].vertices[k] << " ";
 //            }
 //            std::cout << std::endl;
 //        }
 
-        // preVertexArray
-//        OctNode *SubdividePreVertexArray = NULL;
+//        for(int j=0;j<100;++j){
+//            printf("%d owner:%d\n",j,SubdividePreVertexArray[j].ownerNodeIdx);
+//        }
+
+        VertexNode *SubdivideVertexArray = NULL;
 //        nByte = sizeof(VertexNode) * 8 * fixedDepthNodeNum[maxDepth_h];
-//        CHECK(cudaMalloc((VertexNode**)&SubdividePreVertexArray,nByte));
-//        CHECK(cudaMemset(SubdividePreVertexArray,0,nByte));
+        CHECK(cudaMallocManaged((VertexNode**)&SubdivideVertexArray,nByte));
+        CHECK(cudaMemset(SubdivideVertexArray,0,nByte));
+        thrust::device_ptr<VertexNode> SubdividePreVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(SubdividePreVertexArray);
+        thrust::device_ptr<VertexNode> SubdivideVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(SubdivideVertexArray);
+        thrust::device_ptr<VertexNode> SubdivideVertexArray_end = thrust::copy_if(SubdividePreVertexArray_ptr, SubdividePreVertexArray_ptr + 8 * fixedDepthNodeNum[maxDepth_h],SubdivideVertexArray_ptr,validVertex());
+        cudaDeviceSynchronize();
 
-//        initVertexOwner<<<grid,block>>>(SubdivideArray,fixedDepthNodeAddress[maxDepth_h],SubdivideArray_sz,
-//                                        preVertexArray,
-//                                        );
+        cudaFree(SubdividePreVertexArray);
 
+        int SubdivideVertexArray_sz = SubdivideVertexArray_end - SubdivideVertexArray_ptr;
 
-//        cudaFree(SubdividePreVertexArray);
+//        for(int j=0;j<100;++j){
+//            printf("%d owner:%d\n",j,SubdivideVertexArray[j].ownerNodeIdx);
+//        }
+
+        maintainSubdivideVertexNodePointer<<<grid,block>>>(SubdivideVertexArray,SubdivideVertexArray_sz,
+                                                           NodeArray,NodeArray_sz,
+                                                           SubdivideArray,
+                                                           CenterBuffer,
+                                                           SubdivideArrayCenterBuffer);
+        cudaDeviceSynchronize();
+
+//        for(int j=0;j<12;++j){
+//            printf("vertex:%d\n",j);
+//            for(int k=0;k<8;++k){
+//                printf("node[%d]:%d ",k,SubdivideVertexArray[j].nodes[k]);
+//            }
+//            puts("");
+//        }
+//
+//
+//        for (int j = fixedDepthNodeAddress[maxDepth_h]; j < fixedDepthNodeAddress[maxDepth_h] + 10; ++j) {
+//            std::cout << std::bitset<32>(SubdivideArray[j].key) << " parent:" << SubdivideArray[j].parent
+//                      << std::endl;
+//            for (int k = 0; k < 8; ++k) {
+//                std::cout << "children[" << k << "]:" << SubdivideArray[j].children[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for (int k = 0; k < 27; ++k) {
+//                std::cout << "neigh:[" << k << "]:" << SubdivideArray[j].neighs[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for(int k=0;k<8;++k){
+//                std::cout << "vertices["<<k<<"]:"<<SubdivideArray[j].vertices[k]<<" ";
+//            }
+//            std::cout << std::endl;
+//        }
+
 
         CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&rootId,sizeof(int),cudaMemcpyHostToDevice));
         cudaFree(SubdivideArray);
