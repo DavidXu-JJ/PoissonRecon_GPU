@@ -24,6 +24,8 @@
 #include "CG_CUDA.cuh"
 #include "MarchingCubes.cuh"
 
+#define FORCE_UNIT_NORMALS 1
+
 //! maybe cudaMemset and cudaMemcpy can be optimized into async function
 
 __device__ __host__ int qpow(int p,int q) {
@@ -3285,8 +3287,6 @@ int main() {
     cudaDeviceSynchronize();
 
     for(int i=0;i<SubdivideNum;++i){
-//        if(SubdivideDepthBuffer[i]<6) continue;
-//        printf("i:%d depth:%d\n",i,SubdivideDepthBuffer[i]);
         int rootDepth = SubdivideDepthBuffer[i];
         int SubdivideArray_sz = (qpow(8,(maxDepth_h-rootDepth+1) )-1 )/7;
         int fixedDepthNodeNum[maxDepth+1]={0};
@@ -3509,7 +3509,7 @@ int main() {
 
         int *SubdivideVexNums=NULL;
         nByte = sizeof(int) * SubdivideEdgeArray_sz;
-        CHECK(cudaMallocManaged((int**)&SubdivideVexNums,nByte));
+        CHECK(cudaMalloc((int**)&SubdivideVexNums,nByte));
         CHECK(cudaMemset(SubdivideVexNums,0,nByte));
 
         generateSubdivideVexNums<<<grid,block>>>(SubdivideEdgeArray,SubdivideEdgeArray_sz,
@@ -3520,7 +3520,7 @@ int main() {
 
         int *SubdivideVexAddress=NULL;
         nByte = sizeof(int) *SubdivideEdgeArray_sz;
-        CHECK(cudaMallocManaged((int**)&SubdivideVexAddress,nByte));
+        CHECK(cudaMalloc((int**)&SubdivideVexAddress,nByte));
         CHECK(cudaMemset(SubdivideVexAddress,0,nByte));
 
         thrust::device_ptr<int> SubdivideVexNums_ptr = thrust::device_pointer_cast<int>(SubdivideVexNums);
@@ -3539,7 +3539,7 @@ int main() {
 
         int *SubdivideTriNums=NULL;
         nByte = sizeof(int) * fixedDepthNodeNum[maxDepth_h];
-        CHECK(cudaMallocManaged((int**)&SubdivideTriNums,nByte));
+        CHECK(cudaMalloc((int**)&SubdivideTriNums,nByte));
         CHECK(cudaMemset(SubdivideTriNums,0,nByte));
 
         int *SubdivideCubeCatagory = NULL;
@@ -3555,7 +3555,7 @@ int main() {
 
         int *SubdivideTriAddress=NULL;
         nByte = sizeof(int) * fixedDepthNodeNum[maxDepth_h];
-        CHECK(cudaMallocManaged((int**)&SubdivideTriAddress,nByte));
+        CHECK(cudaMalloc((int**)&SubdivideTriAddress,nByte));
         CHECK(cudaMemset(SubdivideTriAddress,0,nByte));
 
         thrust::device_ptr<int> SubdivideTriNums_ptr = thrust::device_pointer_cast<int>(SubdivideTriNums);
@@ -3564,10 +3564,12 @@ int main() {
         thrust::exclusive_scan(SubdivideTriNums_ptr,SubdivideTriNums_ptr + fixedDepthNodeNum[maxDepth_h],SubdivideTriAddress_ptr);
         cudaDeviceSynchronize();
 
-        int SubdivideLastVexAddr = SubdivideVexAddress[SubdivideEdgeArray_sz-1];
-        int SubdivideLastVexNums = SubdivideVexNums[SubdivideEdgeArray_sz-1];
-//        CHECK(cudaMemcpy(&SubdivideLastVexAddr,SubdivideVexAddress+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
-//        CHECK(cudaMemcpy(&SubdivideLastVexNums,SubdivideVexNums+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+//        int SubdivideLastVexAddr = SubdivideVexAddress[SubdivideEdgeArray_sz-1];
+//        int SubdivideLastVexNums = SubdivideVexNums[SubdivideEdgeArray_sz-1];
+        int SubdivideLastVexAddr;
+        int SubdivideLastVexNums;
+        CHECK(cudaMemcpy(&SubdivideLastVexAddr,SubdivideVexAddress+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(&SubdivideLastVexNums,SubdivideVexNums+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
 
         int SubdivideAllVexNums = SubdivideLastVexAddr + SubdivideLastVexNums;
         Point3D<float> *SubdivideVertexBuffer = NULL;
@@ -3586,10 +3588,12 @@ int main() {
         cudaDeviceSynchronize();
 
 
-        int SubdivideLastTriAddr = SubdivideTriAddress[fixedDepthNodeNum[maxDepth_h]-1];
-        int SubdivideLastTriNums = SubdivideTriNums[fixedDepthNodeNum[maxDepth_h]-1];
-//        CHECK(cudaMemcpy(&SubdivideLastTriAddr,SubdivideTriAddress+fixedDepthNodeNum[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
-//        CHECK(cudaMemcpy(&SubdivideLastTriNums,SubdivideTriNums+fixedDepthNodeNum[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
+//        int SubdivideLastTriAddr = SubdivideTriAddress[fixedDepthNodeNum[maxDepth_h]-1];
+//        int SubdivideLastTriNums = SubdivideTriNums[fixedDepthNodeNum[maxDepth_h]-1];
+        int SubdivideLastTriAddr;
+        int SubdivideLastTriNums;
+        CHECK(cudaMemcpy(&SubdivideLastTriAddr,SubdivideTriAddress+fixedDepthNodeNum[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(&SubdivideLastTriNums,SubdivideTriNums+fixedDepthNodeNum[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
         int SubdivideAllTriNums = SubdivideLastTriAddr + SubdivideLastTriNums;
 
 //        for(int j=0;j<fixedDepthNodeNum[maxDepth_h];++j){
