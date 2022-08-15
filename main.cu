@@ -2237,36 +2237,35 @@ __global__ void generateIntersectionPoint(EdgeNode *validEdgeArray,int validEdge
     }
 }
 
-__global__ void generateSubdivideIntersectionPoint(EdgeNode *SubdivideEdgeArray,int SubdivideEdgeArray_sz,
+__global__ void generateSubdivideIntersectionPoint(EdgeNode *SubdivideValidEdgeArray,int SubdivideValidEdgeArray_sz,
                                                    VertexNode *SubdivideVertexArray,OctNode *SubdivideArray,
                                                    int NodeArray_sz,
-                                                   int *SubdivideVexNums,int *SubdivideVexAddress,float *SubdivideVvalue,
+                                                   int *SubdivideValidVexAddress,float *SubdivideVvalue,
                                                    Point3D<float> *SubdivideVertexBuffer)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    for(int i=offset;i<SubdivideEdgeArray_sz;++i){
-        if(SubdivideVexNums[i] == 1){
-            int owner=SubdivideEdgeArray[i].ownerNodeIdx - NodeArray_sz;
-            int kind=SubdivideEdgeArray[i].edgeKind;
-            int orientation=kind>>2;
+    for(int i=offset;i<SubdivideValidEdgeArray_sz;++i){
+        int owner=SubdivideValidEdgeArray[i].ownerNodeIdx - NodeArray_sz;
+        int kind=SubdivideValidEdgeArray[i].edgeKind;
+        int orientation=kind>>2;
 
-            int idx[2];
+        int idx[2];
 
-            idx[0]=edgeVertex[kind][0];
-            idx[1]=edgeVertex[kind][1];
+        idx[0]=edgeVertex[kind][0];
+        idx[1]=edgeVertex[kind][1];
 
-            int v1=SubdivideArray[owner].vertices[idx[0]]-1;
-            int v2=SubdivideArray[owner].vertices[idx[1]]-1;
-            Point3D<float> p1=SubdivideVertexArray[v1].pos,p2=SubdivideVertexArray[v2].pos;
-            float f1=SubdivideVvalue[v1],f2=SubdivideVvalue[v2];
-            Point3D<float> isoPoint;
-            interpolatePoint(p1,p2,
-                             orientation,f1,f2,
-                             isoPoint);
-            SubdivideVertexBuffer[SubdivideVexAddress[i]] = isoPoint;
-        }
+        int v1=SubdivideArray[owner].vertices[idx[0]]-1;
+        int v2=SubdivideArray[owner].vertices[idx[1]]-1;
+        Point3D<float> p1=SubdivideVertexArray[v1].pos,p2=SubdivideVertexArray[v2].pos;
+        float f1=SubdivideVvalue[v1],f2=SubdivideVvalue[v2];
+        Point3D<float> isoPoint;
+        interpolatePoint(p1,p2,
+                         orientation,f1,f2,
+                         isoPoint);
+        SubdivideVertexBuffer[SubdivideValidVexAddress[i]] = isoPoint;
+//        printf("%d\n",SubdivideValidVexAddress[i]);
     }
 }
 
@@ -3223,6 +3222,7 @@ int main() {
     int validVexAddress_sz = validVexAddress_end - validVexAddress_ptr;
     assert(allVexNums == validVexAddress_sz);
 
+    grid = (std::min(allVexNums / 1024 , 32) ,allVexNums/32768);
     generateIntersectionPoint<<<grid,block>>>(validEdgeArray,allVexNums,
                                               VertexArray,NodeArray,
                                               validVexAddress,vvalue,
@@ -3280,6 +3280,8 @@ int main() {
     cudaFree(triAddress);
     cudaFree(VertexBuffer);
     cudaFree(TriangleBuffer);
+    cudaFree(validEdgeArray);
+    cudaFree(validVexAddress);
 
 
     // ----------------------------------------------------
@@ -3305,7 +3307,7 @@ int main() {
 
     int *SubdivideDepthBuffer=NULL;
     nByte = sizeof(int) * SubdivideNum;
-    CHECK(cudaMallocManaged((int**)&SubdivideDepthBuffer,nByte));
+    CHECK(cudaMalloc((int**)&SubdivideDepthBuffer,nByte));
 
     precomputeSubdivideDepth<<<grid,block>>>(SubdivideNode,SubdivideNum,
                                              DepthBuffer,
@@ -3313,7 +3315,9 @@ int main() {
     cudaDeviceSynchronize();
 
     for(int i=0;i<SubdivideNum;++i){
-        int rootDepth = SubdivideDepthBuffer[i];
+//        int rootDepth = SubdivideDepthBuffer[i];
+        int rootDepth;
+        CHECK(cudaMemcpy(&rootDepth,SubdivideDepthBuffer+i,sizeof(int),cudaMemcpyDeviceToHost));
         int SubdivideArray_sz = (qpow(8,(maxDepth_h-rootDepth+1) )-1 )/7;
         int fixedDepthNodeNum[maxDepth+1]={0};
         int nowNodeNum=1;
@@ -3555,6 +3559,28 @@ int main() {
         thrust::exclusive_scan(SubdivideVexNums_ptr,SubdivideVexNums_ptr + SubdivideEdgeArray_sz, SubdivideVexAddress_ptr);
         cudaDeviceSynchronize();
 
+//        int SubdivideLastVexAddr = SubdivideVexAddress[SubdivideEdgeArray_sz-1];
+//        int SubdivideLastVexNums = SubdivideVexNums[SubdivideEdgeArray_sz-1];
+        int SubdivideLastVexAddr;
+        int SubdivideLastVexNums;
+        CHECK(cudaMemcpy(&SubdivideLastVexAddr,SubdivideVexAddress+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(&SubdivideLastVexNums,SubdivideVexNums+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+
+        int SubdivideAllVexNums = SubdivideLastVexAddr + SubdivideLastVexNums;
+
+        if(SubdivideAllVexNums == 0){
+            CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&rootId,sizeof(int),cudaMemcpyHostToDevice));
+            cudaFree(SubdivideArray);
+            cudaFree(SubdivideArrayCenterBuffer);
+            cudaFree(SubdivideArrayDepthBuffer);
+            cudaFree(SubdivideVertexArray);
+            cudaFree(SubdivideEdgeArray);
+            cudaFree(SubdivideVvalue);
+            cudaFree(SubdivideVexNums);
+            cudaFree(SubdivideVexAddress);
+            continue;
+        }
+
 //        for(int j=0;j<500;++j){
 //            printf("vexNums:%d\n",SubdivideVexNums[j]);
 //        }
@@ -3590,14 +3616,6 @@ int main() {
         thrust::exclusive_scan(SubdivideTriNums_ptr,SubdivideTriNums_ptr + fixedDepthNodeNum[maxDepth_h],SubdivideTriAddress_ptr);
         cudaDeviceSynchronize();
 
-//        int SubdivideLastVexAddr = SubdivideVexAddress[SubdivideEdgeArray_sz-1];
-//        int SubdivideLastVexNums = SubdivideVexNums[SubdivideEdgeArray_sz-1];
-        int SubdivideLastVexAddr;
-        int SubdivideLastVexNums;
-        CHECK(cudaMemcpy(&SubdivideLastVexAddr,SubdivideVexAddress+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
-        CHECK(cudaMemcpy(&SubdivideLastVexNums,SubdivideVexNums+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
-
-        int SubdivideAllVexNums = SubdivideLastVexAddr + SubdivideLastVexNums;
         Point3D<float> *SubdivideVertexBuffer = NULL;
         nByte = sizeof(Point3D<float>) * SubdivideAllVexNums;
         CHECK(cudaMallocManaged((Point3D<float>**)&SubdivideVertexBuffer,nByte));
@@ -3606,12 +3624,31 @@ int main() {
 //            printf("%d %d\n",j,SubdivideVexAddress[j]);
 //        }
 
-        generateSubdivideIntersectionPoint<<<grid,block>>>(SubdivideEdgeArray,SubdivideEdgeArray_sz,
+        EdgeNode * SubdivideValidEdgeArray = NULL;
+        nByte = sizeof(EdgeNode) * SubdivideAllVexNums;
+        CHECK(cudaMalloc((EdgeNode**)&SubdivideValidEdgeArray,nByte));
+        thrust::device_ptr<EdgeNode> SubdivideValidEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(SubdivideValidEdgeArray);
+        SubdivideEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(SubdivideEdgeArray);
+        thrust::device_ptr<EdgeNode> SubdivideValidEdgeArray_end = thrust::copy_if(SubdivideEdgeArray_ptr,SubdivideEdgeArray_ptr + SubdivideEdgeArray_sz,SubdivideVexNums_ptr,SubdivideValidEdgeArray_ptr,validVexNums());
+        cudaDeviceSynchronize();
+
+        int *SubdivideValidVexAddress = NULL;
+        nByte = sizeof(int) * SubdivideAllVexNums;
+        CHECK(cudaMalloc((int**)&SubdivideValidVexAddress,nByte));
+        thrust::device_ptr<int> SubdivideValidVexAddress_ptr = thrust::device_pointer_cast<int>(SubdivideValidVexAddress);
+        thrust::device_ptr<int> SubdivideValidVexAddress_end = thrust::copy_if(SubdivideVexAddress_ptr,SubdivideVexAddress_ptr + SubdivideEdgeArray_sz,SubdivideVexNums_ptr,SubdivideValidVexAddress_ptr,validVexNums());
+        cudaDeviceSynchronize();
+
+//        grid = (std::min(SubdivideAllVexNums / 1024 , 32) ,SubdivideAllVexNums/32768);
+        generateSubdivideIntersectionPoint<<<grid,block>>>(SubdivideValidEdgeArray,SubdivideAllVexNums,
                                                            SubdivideVertexArray,SubdivideArray,
                                                            NodeArray_sz,
-                                                           SubdivideVexNums,SubdivideVexAddress,SubdivideVvalue,
+                                                           SubdivideValidVexAddress,SubdivideVvalue,
                                                            SubdivideVertexBuffer);
         cudaDeviceSynchronize();
+
+        cudaFree(SubdivideValidEdgeArray);
+        cudaFree(SubdivideValidVexAddress);
 
 
 //        int SubdivideLastTriAddr = SubdivideTriAddress[fixedDepthNodeNum[maxDepth_h]-1];
