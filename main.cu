@@ -1728,9 +1728,8 @@ __global__ void initEdgeArray(OctNode *NodeArray,int left,int right,
 
 // only use for node at maxDepth
 __global__ void initSubdivideEdgeArray(OctNode *SubdivideArray,int left,int right,
-                                       OctNode *NodeArray,int NodeArray_sz,
+                                       int NodeArray_sz,
                                        EdgeNode *SubdividePreEdgeArray,
-                                       Point3D<float> *CenterBuffer,
                                        Point3D<float> *SubdivideArrayCenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -1748,11 +1747,8 @@ __global__ void initSubdivideEdgeArray(OctNode *SubdivideArray,int left,int righ
 #pragma unroll
         for(int k=0;k<27;++k){
             neigh[k]=SubdivideArray[i].neighs[k];
-            if(neigh[k] != -1){
-                if(neigh[k] < NodeArray_sz)
-                    neighCenter[k]=CenterBuffer[neigh[k]];
-                else
-                    neighCenter[k]=SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+            if(neigh[k] != -1 && neigh[k] >= NodeArray_sz){
+                neighCenter[k]=SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
             }
         }
         const Point3D<float> &nodeCenter = neighCenter[13];
@@ -1786,8 +1782,7 @@ __global__ void initSubdivideEdgeArray(OctNode *SubdivideArray,int left,int righ
             for(int k=0;k<27;++k){
                 if(neigh[k] != -1 && SquareDistance(edgeCenterPos[j],neighCenter[k]) < Widthsq){
                     int neighKey;
-                    if(neigh[k] < NodeArray_sz)
-                        neighKey=NodeArray[neigh[k]].key;
+                    if(neigh[k] < NodeArray_sz) continue;
                     else
                         neighKey=SubdivideArray[neigh[k] - NodeArray_sz].key;
                     if(NodeOwnerKey[j]>neighKey){
@@ -1873,7 +1868,7 @@ __global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
 
 // only use for edge at maxDepth
 __global__ void maintainSubdivideEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
-                                                 OctNode *NodeArray,int NodeArray_sz,
+                                                 int NodeArray_sz,
                                                  OctNode *SubdivideArray,
                                                  Point3D<float> *CenterBuffer,
                                                  Point3D<float> *SubdivideArrayCenterBuffer){
@@ -1934,9 +1929,7 @@ __global__ void maintainSubdivideEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArr
                         ++dim;
                     }
                 }
-                if(neigh[k] < NodeArray_sz)
-                    NodeArray[neigh[k]].edges[idx] = i+1;
-                else
+                if(neigh[k] >= NodeArray_sz)
                     SubdivideArray[neigh[k] - NodeArray_sz].edges[idx] = i+1;
             }
         }
@@ -3385,9 +3378,8 @@ int main() {
         CHECK(cudaMemset(SubdividePreEdgeArray,0,nByte));
 
         initSubdivideEdgeArray<<<grid,block>>>(SubdivideArray,fixedDepthNodeAddress[maxDepth_h],SubdivideArray_sz,
-                                               NodeArray,NodeArray_sz,
+                                               NodeArray_sz,
                                                SubdividePreEdgeArray,
-                                               CenterBuffer,
                                                SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
 
@@ -3405,11 +3397,36 @@ int main() {
         int SubdivideEdgeArray_sz = SubdivideEdgeArray_end - SubdivideEdgeArray_ptr;
 
         maintainSubdivideEdgeNodePointer<<<grid,block>>>(SubdivideEdgeArray,SubdivideEdgeArray_sz,
-                                                         NodeArray,NodeArray_sz,
+                                                         NodeArray_sz,
                                                          SubdivideArray,
                                                          CenterBuffer,
                                                          SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
+
+//        for(int j=0;j<15;++j){
+//            printf("%d owner:%d\n",j,SubdivideEdgeArray[i].ownerNodeIdx);
+//        }
+//
+//        for (int j = fixedDepthNodeAddress[maxDepth_h]; j < fixedDepthNodeAddress[maxDepth_h] + 10; ++j) {
+//            std::cout << std::bitset<32>(SubdivideArray[j].key) << " parent:" << SubdivideArray[j].parent
+//                      << std::endl;
+//            for (int k = 0; k < 8; ++k) {
+//                std::cout << "children[" << k << "]:" << SubdivideArray[j].children[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for (int k = 0; k < 27; ++k) {
+//                std::cout << "neigh:[" << k << "]:" << SubdivideArray[j].neighs[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for(int k=0;k<8;++k){
+//                std::cout << "vertices["<<k<<"]:"<<SubdivideArray[j].vertices[k]<<" ";
+//            }
+//            std::cout << std::endl;
+//            for(int k=0;k<12;++k){
+//                std::cout << "edges["<<k<<"]:"<<SubdivideArray[j].edges[k]<<" ";
+//            }
+//            std::cout << std::endl;
+//        }
 
         // ----------------------------------------------------
 
@@ -3445,9 +3462,6 @@ int main() {
 //            printf("%f\n",SubdivideVvalue[i]);
 //        }
 
-//        for(int j=0;j<15;++j){
-//            printf("%d owner:%d\n",j,SubdivideEdgeArray[i].ownerNodeIdx);
-//        }
 
 
 //        for(int j=0;j<12;++j){
