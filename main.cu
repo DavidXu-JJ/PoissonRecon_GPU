@@ -982,6 +982,18 @@ __global__ void precomputeEncodedFunctionIdxOfNode(int *BaseAddressArray_d,OctNo
     }
 }
 
+__global__ void precomputeEncodedFunctionIdxOfNode(OctNode *NodeArray,int NodeArray_sz,
+                                                   int *DepthBuffer,int *NodeIdxInFunction)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<NodeArray_sz;i+=stride){
+        int depthD= DepthBuffer[i];
+        getEncodedFunctionIdxOfNode(NodeArray[i].key,depthD,NodeIdxInFunction+i);
+    }
+}
+
 __global__ void computeEncodedFinerNodesDivergence(int *BaseAddressArray_d, int *EncodedNodeIdxInFunction,
                                                    OctNode *NodeArray, int left, int right,
                                                    Point3D<float> *VectorField,const double *dot_F_DF,
@@ -1979,7 +1991,6 @@ __device__ int findStack(int *stack,int &top,const int &val){
 __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int VertexArray_sz,
                                                    OctNode *NodeArray,float *d_x,
                                                    int *EncodedNodeIdxInFunction,ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d,
-                                                   int *DepthBuffer,Point3D<float> *CenterBuffer,
                                                    float *vvalue,float isoValue)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -2041,8 +2052,64 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
                     }
                 }
             }
-        }else break;
+        }
         vvalue[i]=val-isoValue;
+    }
+}
+
+__global__ void computeSubdivideVertexImplicitFunctionValue(VertexNode *SubdivideVertexArray,int SubdivideVertexArray_sz,
+                                                            OctNode *SubdivideArray,
+                                                            OctNode *NodeArray,int NodeArray_sz,
+                                                            float *d_x, int *EncodedNodeIdxInFunction,
+                                                            ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d,
+                                                            float *SubdivideVvalue,float isoValue)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int maxD=maxDepth;
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
+    for(int i=offset;i<SubdivideVertexArray_sz;i+=stride){
+        VertexNode nowVertex = SubdivideVertexArray[i];
+        int depth = maxDepth;
+        float val=0.0f;
+        int nowNode = nowVertex.ownerNodeIdx;
+        if(nowNode>0){
+            while(nowNode != -1){
+                for(int k=0;k<27;++k){
+                    int neigh;
+                    if(nowNode < NodeArray_sz)
+                        neigh = NodeArray[nowNode].neighs[k];
+                    else
+                        neigh = SubdivideArray[nowNode - NodeArray_sz].neighs[k];
+                    if(neigh != -1){
+                        int idxO[3];
+                        int encode_idx;
+                        if(neigh < NodeArray_sz)
+                            encode_idx=EncodedNodeIdxInFunction[neigh];
+                        else continue;  // d_x = 0 in Subdivide space
+                        idxO[0]=encode_idx%decode_offset1;
+                        idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+                        idxO[2]=encode_idx/decode_offset2;
+
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
+
+                        val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
+                               * value(funcY,nowVertex.pos.coords[1])
+                               * value(funcZ,nowVertex.pos.coords[2]);
+
+                    }
+                }
+                if(nowNode < NodeArray_sz)
+                    nowNode = NodeArray[nowNode].parent;
+                else
+                    nowNode = SubdivideArray[nowNode - NodeArray_sz].parent;
+            }
+        }
+        SubdivideVvalue[i]=val-isoValue;
     }
 }
 
@@ -2071,30 +2138,10 @@ __global__ void generateVexNums(EdgeNode *EdgeArray,int EdgeArray_sz,
         int owner=nowEdge.ownerNodeIdx;
         int kind=nowEdge.edgeKind;
         int orientation=kind>>2;
-//        int off[2];
-//        off[0]=kind&1;
-//        off[1]=(kind&2)>>1;
         int idx[2];
-//        switch (orientation) {
-//            case 0:
-//                idx[0]= VertexIndex(0,off[0],off[1]);
-//                idx[1]= VertexIndex(1,off[0],off[1]);
-//                break;
-//            case 1:
-//                idx[0]= VertexIndex(off[0],0,off[1]);
-//                idx[1]= VertexIndex(off[0],1,off[1]);
-//                break;
-//            case 2:
-//                idx[0]= VertexIndex(off[0],off[1],0);
-//                idx[1]= VertexIndex(off[0],off[1],1);
-//                break;
-//            default:
-//                printf("error\n");
-//        }
         idx[0]=edgeVertex[kind][0];
         idx[1]=edgeVertex[kind][1];
 
-//        OctNode ownerNode=NodeArray[owner];
         int v1=NodeArray[owner].vertices[idx[0]]-1;
         int v2=NodeArray[owner].vertices[idx[1]]-1;
         if(vvalue[v1]*vvalue[v2]<=0){
@@ -3041,7 +3088,6 @@ int main() {
     computeVertexImplicitFunctionValue<<<grid,block>>>(VertexArray,VertexArray_sz,
                                                        NodeArray,d_x,
                                                        EncodedNodeIdxInFunction,baseFunctions_d,
-                                                       DepthBuffer,CenterBuffer,
                                                        vvalue,isoValue);
     cudaDeviceSynchronize();
 
@@ -3258,6 +3304,7 @@ int main() {
 
         }
 
+        // ----------------------------------------------------
 
         // preVertexArray
         VertexNode *SubdividePreVertexArray = NULL;
@@ -3318,6 +3365,8 @@ int main() {
                                                            SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
 
+        // ----------------------------------------------------
+
         // preEdgeArray
         EdgeNode *SubdividePreEdgeArray = NULL;
         nByte = sizeof(EdgeNode) * 12 * fixedDepthNodeNum[maxDepth_h];
@@ -3350,6 +3399,40 @@ int main() {
                                                          CenterBuffer,
                                                          SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
+
+        // ----------------------------------------------------
+
+//        int *SubdivideEncodedNodeIdxInFunction=NULL;
+//        nByte = sizeof(int) * SubdivideArray_sz;
+//        CHECK(cudaMalloc((int**)&SubdivideEncodedNodeIdxInFunction,nByte));
+//        precomputeEncodedFunctionIdxOfNode<<<grid,block>>>(SubdivideArray,SubdivideArray_sz,
+//                                                           SubdivideArrayDepthBuffer,SubdivideEncodedNodeIdxInFunction);
+//        cudaDeviceSynchronize();
+
+        float *SubdivideVvalue = NULL;
+        nByte = sizeof(float) * SubdivideVertexArray_sz;
+        CHECK(cudaMalloc((float**)&SubdivideVvalue,nByte));
+        CHECK(cudaMemset(SubdivideVvalue,0,nByte));
+
+        computeSubdivideVertexImplicitFunctionValue<<<grid,block>>>(SubdivideVertexArray,SubdivideVertexArray_sz,
+                                                                    SubdivideArray,
+                                                                    NodeArray,NodeArray_sz,
+                                                                    d_x,EncodedNodeIdxInFunction,
+                                                                    baseFunctions_d,
+                                                                    SubdivideVvalue,isoValue);
+        cudaDeviceSynchronize();
+
+        int *SubdivideVexNums=NULL;
+        nByte = sizeof(int) * SubdivideEdgeArray_sz;
+        CHECK(cudaMalloc((int**)&SubdivideVexNums,nByte));
+        CHECK(cudaMemset(vexNums,0,nByte));
+
+
+
+
+//        for(int i=0;i<10;++i){
+//            printf("%f\n",SubdivideVvalue[i]);
+//        }
 
 //        for(int j=0;j<15;++j){
 //            printf("%d owner:%d\n",j,SubdivideEdgeArray[i].ownerNodeIdx);
@@ -3391,6 +3474,10 @@ int main() {
         cudaFree(SubdivideArray);
         cudaFree(SubdivideArrayCenterBuffer);
         cudaFree(SubdivideArrayDepthBuffer);
+        cudaFree(SubdivideVertexArray);
+        cudaFree(SubdivideEdgeArray);
+        cudaFree(SubdivideVvalue);
+        cudaFree(SubdivideVexNums);
     }
 
 
