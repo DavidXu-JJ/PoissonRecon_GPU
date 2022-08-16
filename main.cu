@@ -2546,17 +2546,18 @@ __global__ void precomputeSubdivideDepth(OctNode *SubdivideNode,int SubdivideNum
 
 // correct, but the local memory doesn't support this function to run successfully
 // deprecated
-__global__ void initFixedDepthNums(OctNode *SubdivideNode,int SubdivideNum,
+__global__ void initFixedDepthNums(OctNode *SubdivideNode,int left,int right,
                                    int *SubdivideDepthBuffer,
                                    int *fixedDepthNums)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
-    for(int i=offset;i<SubdivideNum;i+=stride) {
+    offset += left;
+    for(int i=offset;i<right;i+=stride) {
         int nodeNum=1;
         for(int depth=SubdivideDepthBuffer[i];depth <= maxDepth;++depth){
-            fixedDepthNums[ (depth-1) * SubdivideNum + i] = nodeNum;
+            fixedDepthNums[ (depth-1) * (right-left) + i - left] = nodeNum;
 //            nodeNum *= 8;
             nodeNum <<= 3;
         }
@@ -2565,7 +2566,7 @@ __global__ void initFixedDepthNums(OctNode *SubdivideNode,int SubdivideNum,
 
 // correct, but the local memory doesn't support this function to run successfully
 // deprecated
-__global__ void wholeRebuildArray(OctNode *SubdivideNode,int SubdivideNum,
+__global__ void wholeRebuildArray(OctNode *SubdivideNode,int left,int right,
                                   OctNode *NodeArray,int NodeArray_sz,
                                   int *SubdivideDepthBuffer,
                                   int *depthNodeAddress_d,int *fixedDepthAddress,
@@ -2574,13 +2575,16 @@ __global__ void wholeRebuildArray(OctNode *SubdivideNode,int SubdivideNum,
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
     int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset += left;
     int depthNodeAddress[maxDepth+1];
     for(int i=0;i<=maxDepth;++i){
         depthNodeAddress[i]=depthNodeAddress_d[i];
     }
-    for(int i=offset;i<SubdivideNum;i+=stride){
+    int finerSubdivideNum = right - left;
+    for(int i=offset;i<right;i+=stride){
         int nowDepth = SubdivideDepthBuffer[i];
-        int fixedDepthOffset = fixedDepthAddress[(nowDepth-1) * SubdivideNum + i];
+        int relativeId = i - left;
+        int fixedDepthOffset = fixedDepthAddress[(nowDepth-1) * finerSubdivideNum + relativeId];
         int nowIdx = depthNodeAddress[nowDepth] + fixedDepthOffset;
         OctNode rootNode = SubdivideNode[i];
         rootNode.neighs[13] = NodeArray_sz + nowIdx;
@@ -2591,10 +2595,10 @@ __global__ void wholeRebuildArray(OctNode *SubdivideNode,int SubdivideNum,
         int childrenNums=8;
         while(nowDepth < maxDepth) {
             ++nowDepth;
-            fixedDepthOffset = fixedDepthAddress[(nowDepth - 1) * SubdivideNum + i];
+            fixedDepthOffset = fixedDepthAddress[(nowDepth - 1) * finerSubdivideNum + relativeId];
             nowIdx = depthNodeAddress[nowDepth] + fixedDepthOffset;
             for (int j = 0; j < childrenNums; j+=8) {
-                int fatherFixedDepthOffset = fixedDepthAddress[(nowDepth-2) * SubdivideNum + i];
+                int fatherFixedDepthOffset = fixedDepthAddress[(nowDepth-2) * finerSubdivideNum + relativeId];
                 parentNodeIdx = depthNodeAddress[nowDepth-1] + fatherFixedDepthOffset + j/8;
                 int parentGlobalIdx=RebuildArray[parentNodeIdx].neighs[13];
                 int parentKey=RebuildArray[parentNodeIdx].key;
@@ -3314,10 +3318,15 @@ int main() {
                                              SubdivideDepthBuffer);
     cudaDeviceSynchronize();
 
+    int finerDepthStart;
     for(int i=0;i<SubdivideNum;++i){
 //        int rootDepth = SubdivideDepthBuffer[i];
         int rootDepth;
         CHECK(cudaMemcpy(&rootDepth,SubdivideDepthBuffer+i,sizeof(int),cudaMemcpyDeviceToHost));
+        if(rootDepth >= 5){
+            finerDepthStart = i;
+            break;
+        }
         int SubdivideArray_sz = (qpow(8,(maxDepth_h-rootDepth+1) )-1 )/7;
         int fixedDepthNodeNum[maxDepth+1]={0};
         int nowNodeNum=1;
@@ -3739,6 +3748,62 @@ int main() {
         cudaFree(SubdivideVertexBuffer);
         cudaFree(SubdivideTriangleBuffer);
     }
+
+    int *fixedDepthNums=NULL;
+    int finerSubdivideNum = SubdivideNum - finerDepthStart;
+    nByte = sizeof(int) * finerSubdivideNum * maxDepth_h;
+    CHECK(cudaMalloc((int**)&fixedDepthNums,nByte));
+    CHECK(cudaMemset(fixedDepthNums,0,nByte));
+
+    initFixedDepthNums<<<grid,block>>>(SubdivideNode,finerDepthStart,SubdivideNum,
+                                       SubdivideDepthBuffer,
+                                       fixedDepthNums);
+    cudaDeviceSynchronize();
+
+    thrust::device_ptr<int> fixedDepthNums_ptr=thrust::device_pointer_cast<int>(fixedDepthNums);
+    int rebuildNums=thrust::reduce(fixedDepthNums_ptr,fixedDepthNums_ptr+finerSubdivideNum * maxDepth_h);
+    cudaDeviceSynchronize();
+
+    int depthNodeCount[maxDepth_h+1];
+    depthNodeCount[0]=0;
+    for(int depth=1;depth<=maxDepth_h;++depth){
+        depthNodeCount[depth]=thrust::reduce(fixedDepthNums_ptr+(depth-1)*finerSubdivideNum,fixedDepthNums_ptr+depth*finerSubdivideNum);
+    }
+    cudaDeviceSynchronize();
+
+    int depthNodeAddress[maxDepth_h+1];
+    depthNodeAddress[0]=0;
+    for(int depth=1;depth<=maxDepth_h;++depth){
+        depthNodeAddress[depth] = depthNodeAddress[depth-1] + depthNodeCount[depth-1];
+//        printf("%d %d\n",depth,depthNodeAddress[depth]);
+    }
+
+    int *depthNodeAddress_d=NULL;
+    nByte = sizeof(int) * (maxDepth_h+1);
+    CHECK(cudaMalloc((int**)&depthNodeAddress_d,nByte));
+    CHECK(cudaMemcpy(depthNodeAddress_d,depthNodeAddress,nByte,cudaMemcpyHostToDevice));
+
+    int *fixedDepthAddress=NULL;
+    nByte = sizeof(int) * finerSubdivideNum * maxDepth_h;
+    CHECK(cudaMalloc((int**)&fixedDepthAddress,nByte));
+    CHECK(cudaMemset(fixedDepthAddress,0,nByte));
+    for(int depth=1;depth<=maxDepth_h;++depth){
+        thrust::device_ptr<int> fixedDepthAddress_ptr=thrust::device_pointer_cast<int>(fixedDepthAddress+(depth-1)*finerSubdivideNum);
+        thrust::exclusive_scan(fixedDepthNums_ptr+(depth-1)*finerSubdivideNum,fixedDepthNums_ptr+depth*finerSubdivideNum,fixedDepthAddress_ptr);
+        cudaDeviceSynchronize();
+    }
+
+    OctNode *RebuildArray=NULL;
+    long long nBytell = 1ll * sizeof(OctNode) * rebuildNums;
+    CHECK(cudaMalloc((OctNode**)&RebuildArray,nBytell));
+    CHECK(cudaMemset(RebuildArray,0,nBytell));
+
+    wholeRebuildArray<<<grid,block>>>(SubdivideNode,finerDepthStart,SubdivideNum,
+                                 NodeArray,NodeArray_sz,
+                                 SubdivideDepthBuffer,
+                                 depthNodeAddress_d,fixedDepthAddress,
+                                 RebuildArray);
+    cudaDeviceSynchronize();
 
 
     PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
