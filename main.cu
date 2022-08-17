@@ -1554,6 +1554,73 @@ __global__ void initSubdivideVertexOwner(int NodeArray_sz,
     }
 }
 
+// only process vertex at maxDepth
+__global__ void initSubdivideVertexOwner(int NodeArray_sz,
+                                         EasyOctNode *SubdivideArray,int left,int right,
+                                         VertexNode *SubdividePreVertexArray,
+                                         Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    int NodeOwnerKey[8];
+    int NodeOwnerIdx[8];
+    for(int i=offset;i<right;i+=stride){
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+#pragma unroll
+        for(int k=0;k<27;++k){
+            neigh[k]=SubdivideArray[i].neighs[k];
+            if(neigh[k] != -1 && neigh[k] >= NodeArray_sz){
+                neighCenter[k] = SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+            }
+        }
+        const Point3D<float> &nodeCenter = neighCenter[13];
+
+        Point3D<float> vertexPos[8];
+#pragma unroll
+        for(int j=0;j<8;++j) {
+            vertexPos[j].coords[0] = nodeCenter.coords[0] + (2 * (j & 1) - 1) * halfWidth;
+            vertexPos[j].coords[1] = nodeCenter.coords[1] + (2 * ((j & 2) >> 1) - 1) * halfWidth;
+            vertexPos[j].coords[2] = nodeCenter.coords[2] + (2 * ((j & 4) >> 2) - 1) * halfWidth;
+        }
+
+#pragma unroll
+        for(int j=0;j<8;++j)
+            NodeOwnerKey[j]=0x7fffffff;
+        for(int j=0;j<8;++j){
+            for(int k=0;k<27;++k){
+                if(neigh[k] != -1 && SquareDistance(vertexPos[j],neighCenter[k]) < Widthsq){
+                    int neighKey;
+                    if(neigh[k] < NodeArray_sz) continue;
+                    else
+                        neighKey=SubdivideArray[neigh[k]-NodeArray_sz].key;
+                    if(NodeOwnerKey[j]>neighKey){
+                        NodeOwnerKey[j]=neighKey;
+                        NodeOwnerIdx[j]=neigh[k];
+                    }
+                }
+            }
+        }
+#pragma unroll
+        for(int j=0;j<8;++j) {
+            if(NodeOwnerIdx[j] == NodeArray_sz + i) {
+                int vertexIdx = 8 * (i - left) + j;
+                SubdividePreVertexArray[vertexIdx].ownerNodeIdx = NodeOwnerIdx[j];
+                SubdividePreVertexArray[vertexIdx].pos.coords[0] = vertexPos[j].coords[0] ;
+                SubdividePreVertexArray[vertexIdx].pos.coords[1] = vertexPos[j].coords[1] ;
+                SubdividePreVertexArray[vertexIdx].pos.coords[2] = vertexPos[j].coords[2] ;
+                SubdividePreVertexArray[vertexIdx].vertexKind = j;
+                SubdividePreVertexArray[vertexIdx].depth = depth;
+            }
+        }
+    }
+}
+
 struct validVertex{
     __device__ bool operator()(const VertexNode &x){
         return x.ownerNodeIdx > 0;
@@ -1607,6 +1674,59 @@ __global__ void maintainVertexNodePointerNonAtomic(VertexNode *VertexArray,int V
 __global__ void maintainSubdivideVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,
                                                    int NodeArray_sz,
                                                    OctNode *SubdivideArray,
+                                                   Point3D<float> *CenterBuffer,
+                                                   Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<VertexArray_sz;i+=stride){
+        int owner=VertexArray[i].ownerNodeIdx;
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+        Point3D<float> neighCenter[27];
+        Point3D<float> vertexPos=VertexArray[i].pos;
+
+        int neigh[27];
+        for (int k = 0; k < 27; ++k) {
+            neigh[k]=SubdivideArray[owner-NodeArray_sz].neighs[k];
+        }
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1){
+                if(neigh[k] < NodeArray_sz) {
+                    neighCenter[k] = CenterBuffer[neigh[k]];
+                } else{
+                    neighCenter[k] = SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+                }
+            }
+        }
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(vertexPos,neighCenter[k]) < Widthsq){
+                VertexArray[i].nodes[cnt]=neigh[k];
+                ++cnt;
+                int idx=0;
+                if(neighCenter[k].coords[0]-vertexPos.coords[0] < 0) idx|=1;
+                if(neighCenter[k].coords[2]-vertexPos.coords[2] < 0) idx|=4;
+                if(neighCenter[k].coords[1]-vertexPos.coords[1] < 0) {
+                    if(idx & 1){
+                        idx+=1;
+                    }else{
+                        idx+=3;
+                    }
+                }
+                if(neigh[k] >= NodeArray_sz)
+                    SubdivideArray[neigh[k] - NodeArray_sz].vertices[idx] = i + 1;
+            }
+        }
+    }
+}
+
+// process only the maxDepth subdivide node
+__global__ void maintainSubdivideVertexNodePointer(VertexNode *VertexArray,int VertexArray_sz,
+                                                   int NodeArray_sz,
+                                                   EasyOctNode *SubdivideArray,
                                                    Point3D<float> *CenterBuffer,
                                                    Point3D<float> *SubdivideArrayCenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -1805,6 +1925,83 @@ __global__ void initSubdivideEdgeArray(OctNode *SubdivideArray,int left,int righ
     }
 }
 
+// only use for node at maxDepth
+__global__ void initSubdivideEdgeArray(EasyOctNode *SubdivideArray,int left,int right,
+                                       int NodeArray_sz,
+                                       EdgeNode *SubdividePreEdgeArray,
+                                       Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    int NodeOwnerKey[12];
+    int NodeOwnerIdx[12];
+    for(int i=offset;i<right;i+=stride){
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+#pragma unroll
+        for(int k=0;k<27;++k){
+            neigh[k]=SubdivideArray[i].neighs[k];
+            if(neigh[k] != -1 && neigh[k] >= NodeArray_sz){
+                neighCenter[k]=SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+            }
+        }
+        const Point3D<float> &nodeCenter = neighCenter[13];
+        Point3D<float> edgeCenterPos[12];
+        int orientation[12];
+        int off[24];
+#pragma unroll
+        for(int j=0;j<12;++j) {
+            orientation[j] = j>>2 ;
+            off[2*j] = j&1;
+            off[2*j+1] = (j&2)>>1;
+            int multi[3];
+            int dim=2*j;
+            for(int k=0;k<3;++k){
+                if(orientation[j]==k){
+                    multi[k]=0;
+                }else{
+                    multi[k]=(2 * off[dim] - 1);
+                    ++dim;
+                }
+            }
+            edgeCenterPos[j].coords[0] = nodeCenter.coords[0] + multi[0] * halfWidth;
+            edgeCenterPos[j].coords[1] = nodeCenter.coords[1] + multi[1] * halfWidth;
+            edgeCenterPos[j].coords[2] = nodeCenter.coords[2] + multi[2] * halfWidth;
+        }
+
+#pragma unroll
+        for(int j=0;j<12;++j)
+            NodeOwnerKey[j]=0x7fffffff;
+        for(int j=0;j<12;++j){
+            for(int k=0;k<27;++k){
+                if(neigh[k] != -1 && SquareDistance(edgeCenterPos[j],neighCenter[k]) < Widthsq){
+                    int neighKey;
+                    if(neigh[k] < NodeArray_sz) continue;
+                    else
+                        neighKey=SubdivideArray[neigh[k] - NodeArray_sz].key;
+                    if(NodeOwnerKey[j]>neighKey){
+                        NodeOwnerKey[j]=neighKey;
+                        NodeOwnerIdx[j]=neigh[k];
+                    }
+                }
+            }
+        }
+#pragma unroll
+        for(int j=0;j<12;++j) {
+            if(NodeOwnerIdx[j] == i + NodeArray_sz) {
+                int edgeIdx = 12 * (i - left) + j;
+                SubdividePreEdgeArray[edgeIdx].ownerNodeIdx = NodeOwnerIdx[j];
+                SubdividePreEdgeArray[edgeIdx].edgeKind = j;
+            }
+        }
+    }
+}
+
 __global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
                                         OctNode *NodeArray,
                                         int *DepthBuffer,Point3D<float> *CenterBuffer){
@@ -1872,6 +2069,76 @@ __global__ void maintainEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
 __global__ void maintainSubdivideEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
                                                  int NodeArray_sz,
                                                  OctNode *SubdivideArray,
+                                                 Point3D<float> *CenterBuffer,
+                                                 Point3D<float> *SubdivideArrayCenterBuffer){
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<EdgeArray_sz;i+=stride){
+        EdgeNode nowEdge = EdgeArray[i];
+        int owner = nowEdge.ownerNodeIdx;
+
+        int depth = maxDepth;
+        float halfWidth = 1.0f/(1<<(depth+1));
+        float Width = 1.0f/(1<<depth);
+        float Widthsq = Width * Width;
+
+        Point3D<float> neighCenter[27];
+        int neigh[27];
+        for(int k=0;k<27;++k){
+            neigh[k]=SubdivideArray[owner - NodeArray_sz].neighs[k];
+            if(neigh[k] != -1){
+                if(neigh[k] < NodeArray_sz)
+                    neighCenter[k]=CenterBuffer[neigh[k]];
+                else
+                    neighCenter[k]=SubdivideArrayCenterBuffer[neigh[k] - NodeArray_sz];
+            }
+        }
+
+        const Point3D<float> &nodeCenter = neighCenter[13];
+        Point3D<float> edgeCenterPos;
+        int multi[3];
+        int dim=0;
+        int orientation = nowEdge.edgeKind>>2;
+        int off[2];
+        off[0] = nowEdge.edgeKind & 1;
+        off[1] = (nowEdge.edgeKind & 2)>>1;
+        for(int k=0;k<3;++k){
+            if(orientation==k){
+                multi[k]=0;
+            }else{
+                multi[k]=(2 * off[dim] - 1);
+                ++dim;
+            }
+        }
+        edgeCenterPos.coords[0] = nodeCenter.coords[0] + multi[0] * halfWidth;
+        edgeCenterPos.coords[1] = nodeCenter.coords[1] + multi[1] * halfWidth;
+        edgeCenterPos.coords[2] = nodeCenter.coords[2] + multi[2] * halfWidth;
+
+        int cnt=0;
+        for(int k=0;k<27;++k){
+            if(neigh[k] != -1 && SquareDistance(edgeCenterPos,neighCenter[k]) < Widthsq){
+                EdgeArray[i].nodes[cnt] = neigh[k];
+                ++cnt;
+                int idx=orientation<<2;
+                int dim=0;
+                for(int j=0;j<3;++j){
+                    if(orientation!=j){
+                        if(neighCenter[k].coords[j]-edgeCenterPos.coords[j] < 0) idx |= (1<<dim);
+                        ++dim;
+                    }
+                }
+                if(neigh[k] >= NodeArray_sz)
+                    SubdivideArray[neigh[k] - NodeArray_sz].edges[idx] = i+1;
+            }
+        }
+    }
+}
+
+// only use for edge at maxDepth
+__global__ void maintainSubdivideEdgeNodePointer(EdgeNode *EdgeArray,int EdgeArray_sz,
+                                                 int NodeArray_sz,
+                                                 EasyOctNode *SubdivideArray,
                                                  Point3D<float> *CenterBuffer,
                                                  Point3D<float> *SubdivideArrayCenterBuffer){
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -2100,6 +2367,64 @@ __global__ void computeSubdivideVertexImplicitFunctionValue(VertexNode *Subdivid
     }
 }
 
+__global__ void computeSubdivideVertexImplicitFunctionValue(VertexNode *SubdivideVertexArray,int SubdivideVertexArray_sz,
+                                                            EasyOctNode *SubdivideArray, int *ReplacedNodeId,int *IsRoot,
+                                                            OctNode *NodeArray,int NodeArray_sz,
+                                                            float *d_x, int *EncodedNodeIdxInFunction,
+                                                            ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d,
+                                                            float *SubdivideVvalue,float isoValue)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    int maxD=maxDepth;
+    int decode_offset1=(1<<(maxD+1));
+    int decode_offset2=(1<<(2*(maxD+1)));
+    for(int i=offset;i<SubdivideVertexArray_sz;i+=stride){
+        VertexNode nowVertex = SubdivideVertexArray[i];
+        int depth = maxDepth;
+        float val=0.0f;
+        int nowNode = nowVertex.ownerNodeIdx;
+        if(nowNode>0){
+            while(nowNode != -1){
+                for(int k=0;k<27;++k){
+                    int neigh;
+                    if(nowNode < NodeArray_sz)
+                        neigh = NodeArray[nowNode].neighs[k];
+                    else
+                        neigh = SubdivideArray[nowNode - NodeArray_sz].neighs[k];
+                    if(neigh != -1){
+                        if(neigh >= NodeArray_sz && IsRoot[neigh - NodeArray_sz])
+                            neigh = ReplacedNodeId[neigh - NodeArray_sz];
+                        int idxO[3];
+                        int encode_idx;
+                        if(neigh < NodeArray_sz)
+                            encode_idx=EncodedNodeIdxInFunction[neigh];
+                        else continue;  // d_x = 0 in Subdivide space
+                        idxO[0]=encode_idx%decode_offset1;
+                        idxO[1]=(encode_idx/decode_offset1)%decode_offset1;
+                        idxO[2]=encode_idx/decode_offset2;
+
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcX=baseFunctions_d[idxO[0]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcY=baseFunctions_d[idxO[1]];
+                        ConfirmedPPolynomial<convTimes+1,convTimes+2> funcZ=baseFunctions_d[idxO[2]];
+
+                        val += d_x[neigh] * value(funcX,nowVertex.pos.coords[0])
+                               * value(funcY,nowVertex.pos.coords[1])
+                               * value(funcZ,nowVertex.pos.coords[2]);
+
+                    }
+                }
+                if(nowNode < NodeArray_sz)
+                    nowNode = NodeArray[nowNode].parent;
+                else
+                    nowNode = SubdivideArray[nowNode - NodeArray_sz].parent;
+            }
+        }
+        SubdivideVvalue[i]=val-isoValue;
+    }
+}
+
 __device__ int VertexIndex(const int &x,const int &y,const int &z){
     int ret = x | (z<<2);
     if(y==1){
@@ -2163,6 +2488,32 @@ __global__ void generateSubdivideVexNums(EdgeNode *SubdivideEdgeArray,int Subdiv
     }
 }
 
+__global__ void generateSubdivideVexNums(EdgeNode *SubdivideEdgeArray,int SubdivideEdgeArray_sz,
+                                         int NodeArray_sz,
+                                         EasyOctNode *SubdivideArray,float *SubdivideVvalue,
+                                         int *SubdivideVexNums)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<SubdivideEdgeArray_sz;i+=stride){
+        EdgeNode nowEdge=SubdivideEdgeArray[i];
+        int owner=nowEdge.ownerNodeIdx - NodeArray_sz;
+        int kind=nowEdge.edgeKind;
+        int orientation=kind>>2;
+        int idx[2];
+        idx[0]=edgeVertex[kind][0];
+        idx[1]=edgeVertex[kind][1];
+
+        int v1=SubdivideArray[owner].vertices[idx[0]]-1;
+        int v2=SubdivideArray[owner].vertices[idx[1]]-1;
+//        printf("%d %f %d %f\n",v1,SubdivideVvalue[v1],v2,SubdivideVvalue[v2]);
+        if(SubdivideVvalue[v1]*SubdivideVvalue[v2]<=0){
+            SubdivideVexNums[i]=1;
+        }
+    }
+}
+
 struct validVexNums{
     __device__ bool operator()(const int &x){
         return x != 0;
@@ -2181,6 +2532,28 @@ __global__ void generateTriNums(OctNode *NodeArray,
     offset+=left;
     for(int i=offset;i<right;i+=stride){
         OctNode nowNode=NodeArray[i];
+        int nowCubeCatagory=0;
+        for(int j=0;j<8;++j){
+            if(vvalue[nowNode.vertices[j]-1] < 0){
+                nowCubeCatagory |= 1<<j;
+            }
+        }
+        triNums[i-left]=trianglesCount[nowCubeCatagory];
+        cubeCatagory[i-left]=nowCubeCatagory;
+    }
+}
+
+__global__ void generateTriNums(EasyOctNode *NodeArray,
+                                int left,int right,
+                                float *vvalue,
+                                int *triNums,int *cubeCatagory)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        EasyOctNode nowNode=NodeArray[i];
         int nowCubeCatagory=0;
         for(int j=0;j<8;++j){
             if(vvalue[nowNode.vertices[j]-1] < 0){
@@ -2270,6 +2643,38 @@ __global__ void generateSubdivideIntersectionPoint(EdgeNode *SubdivideValidEdgeA
 }
 
 
+__global__ void generateSubdivideIntersectionPoint(EdgeNode *SubdivideValidEdgeArray,int SubdivideValidEdgeArray_sz,
+                                                   VertexNode *SubdivideVertexArray,EasyOctNode *SubdivideArray,
+                                                   int NodeArray_sz,
+                                                   int *SubdivideValidVexAddress,float *SubdivideVvalue,
+                                                   Point3D<float> *SubdivideVertexBuffer)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    for(int i=offset;i<SubdivideValidEdgeArray_sz;++i){
+        int owner=SubdivideValidEdgeArray[i].ownerNodeIdx - NodeArray_sz;
+        int kind=SubdivideValidEdgeArray[i].edgeKind;
+        int orientation=kind>>2;
+
+        int idx[2];
+
+        idx[0]=edgeVertex[kind][0];
+        idx[1]=edgeVertex[kind][1];
+
+        int v1=SubdivideArray[owner].vertices[idx[0]]-1;
+        int v2=SubdivideArray[owner].vertices[idx[1]]-1;
+        Point3D<float> p1=SubdivideVertexArray[v1].pos,p2=SubdivideVertexArray[v2].pos;
+        float f1=SubdivideVvalue[v1],f2=SubdivideVvalue[v2];
+        Point3D<float> isoPoint;
+        interpolatePoint(p1,p2,
+                         orientation,f1,f2,
+                         isoPoint);
+        SubdivideVertexBuffer[SubdivideValidVexAddress[i]] = isoPoint;
+//        printf("%d\n",SubdivideValidVexAddress[i]);
+    }
+}
+
 __global__ void generateTrianglePos(OctNode *NodeArray,int left,int right,
                                     int *triNums,int *cubeCatagory,
                                     int *vexAddress,
@@ -2341,6 +2746,40 @@ __global__ void generateSubdivideTrianglePos(OctNode *SubdivideArray,int left,in
     offset+=left;
     for(int i=offset;i<right;i+=stride){
         OctNode nowNode = SubdivideArray[i];
+        int depthDIdx = i-left;
+        int nowTriNum = SubdivideTriNums[depthDIdx];
+        int nowCubeCatagory = SubdivideCubeCatagory[depthDIdx];
+        int nowTriangleBufferStart = 3 * SubdivideTriAddress[depthDIdx];
+//        printf("%d %d\n",depthDIdx,nowTriangleBufferStart);
+        for(int j=0;j<3*nowTriNum;j+=3){
+            int edgeIdx[3];
+            edgeIdx[0]=triangles[nowCubeCatagory][j];
+            edgeIdx[1]=triangles[nowCubeCatagory][j+1];
+            edgeIdx[2]=triangles[nowCubeCatagory][j+2];
+
+            int vertexIdx[3];
+            vertexIdx[0] = SubdivideVexAddress[nowNode.edges[edgeIdx[0]] - 1];
+            vertexIdx[1] = SubdivideVexAddress[nowNode.edges[edgeIdx[1]] - 1];
+            vertexIdx[2] = SubdivideVexAddress[nowNode.edges[edgeIdx[2]] - 1];
+
+            SubdivideTriangleBuffer[ nowTriangleBufferStart + j ] = vertexIdx[0];
+            SubdivideTriangleBuffer[ nowTriangleBufferStart + j + 1 ] = vertexIdx[1];
+            SubdivideTriangleBuffer[ nowTriangleBufferStart + j + 2 ] = vertexIdx[2];
+        }
+    }
+}
+
+__global__ void generateSubdivideTrianglePos(EasyOctNode *SubdivideArray,int left,int right,
+                                             int *SubdivideTriNums,int *SubdivideCubeCatagory,
+                                             int *SubdivideVexAddress,
+                                             int *SubdivideTriAddress, int *SubdivideTriangleBuffer)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        EasyOctNode nowNode = SubdivideArray[i];
         int depthDIdx = i-left;
         int nowTriNum = SubdivideTriNums[depthDIdx];
         int nowCubeCatagory = SubdivideCubeCatagory[depthDIdx];
@@ -2570,7 +3009,9 @@ __global__ void wholeRebuildArray(OctNode *SubdivideNode,int left,int right,
                                   OctNode *NodeArray,int NodeArray_sz,
                                   int *SubdivideDepthBuffer,
                                   int *depthNodeAddress_d,int *fixedDepthAddress,
-                                  OctNode *RebuildArray)
+                                  EasyOctNode *RebuildArray,
+                                  int *RebuildDepthBuffer,Point3D<float> *RebuildCenterBuffer,
+                                  int *ReplaceNodeId,int *IsRoot)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
     int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
@@ -2587,8 +3028,19 @@ __global__ void wholeRebuildArray(OctNode *SubdivideNode,int left,int right,
         int fixedDepthOffset = fixedDepthAddress[(nowDepth-1) * finerSubdivideNum + relativeId];
         int nowIdx = depthNodeAddress[nowDepth] + fixedDepthOffset;
         OctNode rootNode = SubdivideNode[i];
+        int replacedId = rootNode.neighs[13];
         rootNode.neighs[13] = NodeArray_sz + nowIdx;
         RebuildArray[nowIdx] = rootNode;
+
+        ReplaceNodeId[nowIdx] = replacedId;
+
+        RebuildDepthBuffer[nowIdx] = nowDepth;
+
+        IsRoot[nowIdx] = 1;
+        Point3D<float> thisNodeCenter;
+        getNodeCenterAllDepth(rootNode.key,thisNodeCenter,nowDepth);
+        RebuildCenterBuffer[nowIdx] = thisNodeCenter;
+
         int sonKey = ( rootNode.key >> (3 * (maxDepth-nowDepth)) ) & 7;
         NodeArray[rootNode.parent].children[sonKey] = NodeArray_sz + nowIdx;
         int parentNodeIdx;
@@ -2604,9 +3056,18 @@ __global__ void wholeRebuildArray(OctNode *SubdivideNode,int left,int right,
                 int parentKey=RebuildArray[parentNodeIdx].key;
                 for(int k=0;k<8;++k){
                     int thisRoundIdx = nowIdx + j + k;
+                    int nowKey = parentKey | (k << (3 * (maxDepth - nowDepth)));
                     RebuildArray[thisRoundIdx].parent = parentGlobalIdx;
-                    RebuildArray[thisRoundIdx].key = parentKey | (k << (3 * (maxDepth - nowDepth)));
+                    RebuildArray[thisRoundIdx].key = nowKey;
                     RebuildArray[thisRoundIdx].neighs[13] = NodeArray_sz + thisRoundIdx;
+
+                    ReplaceNodeId[thisRoundIdx] = replacedId;
+
+                    RebuildDepthBuffer[thisRoundIdx] = nowDepth;
+
+                    getNodeCenterAllDepth(nowKey,thisNodeCenter,nowDepth);
+                    RebuildCenterBuffer[thisRoundIdx] = thisNodeCenter;
+
                     RebuildArray[parentNodeIdx].children[k] = NodeArray_sz + thisRoundIdx;
                 }
             }
@@ -2670,6 +3131,37 @@ __global__ void singleRebuildArray(int NodeArray_sz,
 }
 
 __global__ void computeRebuildNeighbor(OctNode *SubdivideArray,int left,int right,
+                                       OctNode *NodeArray,int NodeArray_sz,
+                                       int depthD)
+{
+    int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
+    int blockId = (gridDim.x * blockIdx.y) + blockIdx.x;
+    int offset= (blockId * (blockDim.x * blockDim.y)) + (threadIdx.y * blockDim.x) + threadIdx.x;
+    offset+=left;
+    for(int i=offset;i<right;i+=stride){
+        for(int j=0;j<27;++j){
+            int sonKey = ( SubdivideArray[i].key >> (3 * (maxDepth-depthD)) ) & 7;
+            int parentIdx = SubdivideArray[i].parent;
+            int neighParent;
+            if(parentIdx < NodeArray_sz){
+                neighParent = NodeArray[ parentIdx ].neighs[LUTparent[sonKey][j]];
+            }else{
+                neighParent = SubdivideArray[ parentIdx - NodeArray_sz ].neighs[LUTparent[sonKey][j]];
+            }
+            if(neighParent != -1){
+                if(neighParent < NodeArray_sz) {
+                    SubdivideArray[i].neighs[j] = NodeArray[neighParent].children[LUTchild[sonKey][j]];
+                }else{
+                    SubdivideArray[i].neighs[j] = SubdivideArray[neighParent - NodeArray_sz ].children[LUTchild[sonKey][j]];
+                }
+            }else{
+                SubdivideArray[i].neighs[j]= -1;
+            }
+        }
+    }
+}
+
+__global__ void computeRebuildNeighbor(EasyOctNode *SubdivideArray,int left,int right,
                                        OctNode *NodeArray,int NodeArray_sz,
                                        int depthD)
 {
@@ -3319,11 +3811,12 @@ int main() {
     cudaDeviceSynchronize();
 
     int finerDepthStart;
+    int finerDepth = 7;
     for(int i=0;i<SubdivideNum;++i){
 //        int rootDepth = SubdivideDepthBuffer[i];
         int rootDepth;
         CHECK(cudaMemcpy(&rootDepth,SubdivideDepthBuffer+i,sizeof(int),cudaMemcpyDeviceToHost));
-        if(rootDepth >= 5){
+        if(rootDepth >= finerDepth){
             finerDepthStart = i;
             break;
         }
@@ -3410,7 +3903,7 @@ int main() {
 //            }
 //            std::cout << std::endl;
 //            for (int k = 0; k < 8; ++k) {
-//                std::cout << "vertices:[" << k << "]" << SubdivideArray[i].vertices[k] << " ";
+//                std::cout << "vertices:[" << k << "]" << SubdivideArray[j].vertices[k] << " ";
 //            }
 //            std::cout << std::endl;
 //        }
@@ -3500,7 +3993,7 @@ int main() {
         cudaDeviceSynchronize();
 
 //        for(int j=0;j<15;++j){
-//            printf("%d owner:%d\n",j,SubdivideEdgeArray[i].ownerNodeIdx);
+//            printf("%d owner:%d\n",j,SubdivideEdgeArray[j].ownerNodeIdx);
 //        }
 //
 //        for (int j = fixedDepthNodeAddress[maxDepth_h]; j < fixedDepthNodeAddress[maxDepth_h] + 10; ++j) {
@@ -3793,18 +4286,299 @@ int main() {
         cudaDeviceSynchronize();
     }
 
-    OctNode *RebuildArray=NULL;
-    long long nBytell = 1ll * sizeof(OctNode) * rebuildNums;
-    CHECK(cudaMalloc((OctNode**)&RebuildArray,nBytell));
+    EasyOctNode *RebuildArray=NULL;
+    long long nBytell = 1ll * sizeof(EasyOctNode) * rebuildNums;
+    CHECK(cudaMallocManaged((EasyOctNode**)&RebuildArray,nBytell));
     CHECK(cudaMemset(RebuildArray,0,nBytell));
+
+    int *RebuildDepthBuffer=NULL;
+    nBytell = 1ll * sizeof(int) * rebuildNums;
+    CHECK(cudaMalloc((int**)&RebuildDepthBuffer,nBytell));
+
+    Point3D<float> *RebuildCenterBuffer = NULL;
+    nBytell = 1ll * sizeof(Point3D<float>) * rebuildNums;
+    CHECK(cudaMalloc((Point3D<float>**)&RebuildCenterBuffer,nBytell));
+
+    int *ReplaceNodeId=NULL;
+    nBytell = 1ll * sizeof(int) * rebuildNums;
+    CHECK(cudaMallocManaged((int**)&ReplaceNodeId,nBytell));
+
+    int *IsRoot=NULL;
+    nBytell = 1ll * sizeof(int) * rebuildNums;
+    CHECK(cudaMallocManaged((int**)&IsRoot,nBytell));
+    CHECK(cudaMemset(IsRoot,0,nBytell));
+
 
     wholeRebuildArray<<<grid,block>>>(SubdivideNode,finerDepthStart,SubdivideNum,
                                  NodeArray,NodeArray_sz,
                                  SubdivideDepthBuffer,
                                  depthNodeAddress_d,fixedDepthAddress,
-                                 RebuildArray);
+                                 RebuildArray,
+                                 RebuildDepthBuffer,RebuildCenterBuffer,
+                                 ReplaceNodeId,IsRoot);
     cudaDeviceSynchronize();
 
+    for(int j=0;j<10;++j){
+        printf("%d IsRoot:%d ReplaceId:%d\n",j,IsRoot[j],ReplaceNodeId[j]);
+    }
+
+    for(int j=finerDepth;j<=maxDepth_h;++j) {
+        computeRebuildNeighbor<<<grid, block>>>(RebuildArray,depthNodeAddress[j],
+                                                depthNodeAddress[j] + depthNodeCount[j],
+                                                NodeArray,NodeArray_sz,
+                                                j);
+        cudaDeviceSynchronize();
+
+//        for (int t = 0; t < 10; ++t) {
+//            std::cout << t<<std::endl;
+//            std::cout << std::bitset<32>(RebuildArray[t].key) << " parent:" << RebuildArray[t].parent
+//                      << std::endl;
+//            for (int k = 0; k < 8; ++k) {
+//                std::cout << "children[" << k << "]:" << RebuildArray[t].children[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for (int k = 0; k < 27; ++k) {
+//                std::cout << "neigh:[" << k << "]" << RebuildArray[t].neighs[k] << " ";
+//            }
+//            std::cout << std::endl;
+////            for (int k = 0; k < 8; ++k) {
+////                std::cout << "vertices:[" << k << "]" << RebuildArray[t].vertices[k] << " ";
+////            }
+////            std::cout << std::endl;
+//        }
+
+    }
+
+    VertexNode *SubdividePreVertexArray = NULL;
+    nBytell = 1ll * sizeof(VertexNode) * 8 * depthNodeCount[maxDepth_h];
+    CHECK(cudaMalloc((VertexNode**)&SubdividePreVertexArray,nBytell));
+    CHECK(cudaMemset(SubdividePreVertexArray,0,nBytell));
+
+    initSubdivideVertexOwner<<<grid,block>>>(NodeArray_sz,
+                                             RebuildArray,depthNodeAddress[maxDepth_h],rebuildNums,
+                                             SubdividePreVertexArray,
+                                             RebuildCenterBuffer);
+    cudaDeviceSynchronize();
+
+    VertexNode *SubdivideVertexArray = NULL;
+    CHECK(cudaMalloc((VertexNode**)&SubdivideVertexArray,nBytell));
+    CHECK(cudaMemset(SubdivideVertexArray,0,nBytell));
+    thrust::device_ptr<VertexNode> SubdividePreVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(SubdividePreVertexArray);
+    thrust::device_ptr<VertexNode> SubdivideVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(SubdivideVertexArray);
+    thrust::device_ptr<VertexNode> SubdivideVertexArray_end = thrust::copy_if(SubdividePreVertexArray_ptr, SubdividePreVertexArray_ptr + 8 * depthNodeCount[maxDepth_h],SubdivideVertexArray_ptr,validVertex());
+    cudaDeviceSynchronize();
+
+    cudaFree(SubdividePreVertexArray);
+
+    int SubdivideVertexArray_sz = SubdivideVertexArray_end - SubdivideVertexArray_ptr;
+
+//    for(int j=0;j<10;++j){
+//            printf("%d owner:%d\n",j,SubdivideVertexArray[j].ownerNodeIdx);
+//        }
+
+    maintainSubdivideVertexNodePointer<<<grid,block>>>(SubdivideVertexArray,SubdivideVertexArray_sz,
+                                                       NodeArray_sz,
+                                                       RebuildArray,
+                                                       CenterBuffer,
+                                                       RebuildCenterBuffer);
+    cudaDeviceSynchronize();
+
+//    for (int t = 0; t < 10; ++t) {
+//            std::cout << t<<std::endl;
+//            std::cout << std::bitset<32>(RebuildArray[t].key) << " parent:" << RebuildArray[t].parent
+//                      << std::endl;
+//            for (int k = 0; k < 8; ++k) {
+//                std::cout << "children[" << k << "]:" << RebuildArray[t].children[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for (int k = 0; k < 27; ++k) {
+//                std::cout << "neigh:[" << k << "]" << RebuildArray[t].neighs[k] << " ";
+//            }
+//            std::cout << std::endl;
+//            for (int k = 0; k < 8; ++k) {
+//                std::cout << "vertices:[" << k << "]" << RebuildArray[t].vertices[k] << " ";
+//            }
+//            std::cout << std::endl;
+//        }
+
+
+    // ----------------------------------------------------
+
+    // preEdgeArray
+    EdgeNode *SubdividePreEdgeArray = NULL;
+    nBytell = 1ll * sizeof(EdgeNode) * 12 * depthNodeCount[maxDepth_h];
+    CHECK(cudaMalloc((EdgeNode**)&SubdividePreEdgeArray,nBytell));
+    CHECK(cudaMemset(SubdividePreEdgeArray,0,nBytell));
+
+    initSubdivideEdgeArray<<<grid,block>>>(RebuildArray,depthNodeAddress[maxDepth_h],rebuildNums,
+                                           NodeArray_sz,
+                                           SubdividePreEdgeArray,
+                                           RebuildCenterBuffer);
+    cudaDeviceSynchronize();
+
+    EdgeNode *SubdivideEdgeArray=NULL;
+    CHECK(cudaMallocManaged((EdgeNode**)&SubdivideEdgeArray,nBytell));
+    CHECK(cudaMemset(SubdivideEdgeArray,0,nBytell));
+
+    thrust::device_ptr<EdgeNode> SubdividePreEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(SubdividePreEdgeArray);
+    thrust::device_ptr<EdgeNode> SubdivideEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(SubdivideEdgeArray);
+    thrust::device_ptr<EdgeNode> SubdivideEdgeArray_end = thrust::copy_if(SubdividePreEdgeArray_ptr,SubdividePreEdgeArray_ptr + 12 * depthNodeCount[maxDepth_h],SubdivideEdgeArray_ptr,validEdge());
+    cudaDeviceSynchronize();
+
+    cudaFree(SubdividePreEdgeArray);
+
+
+    int SubdivideEdgeArray_sz = SubdivideEdgeArray_end - SubdivideEdgeArray_ptr;
+
+    for(int j=0;j<15;++j){
+            printf("%d owner:%d\n",j,SubdivideEdgeArray[j].ownerNodeIdx);
+        }
+
+    maintainSubdivideEdgeNodePointer<<<grid,block>>>(SubdivideEdgeArray,SubdivideEdgeArray_sz,
+                                                     NodeArray_sz,
+                                                     RebuildArray,
+                                                     CenterBuffer,
+                                                     RebuildCenterBuffer);
+    cudaDeviceSynchronize();
+
+    // ----------------------------------------------------
+
+    float *SubdivideVvalue = NULL;
+    nBytell = 1ll * sizeof(float) * SubdivideVertexArray_sz;
+    CHECK(cudaMalloc((float**)&SubdivideVvalue,nBytell));
+    CHECK(cudaMemset(SubdivideVvalue,0,nBytell));
+
+    computeSubdivideVertexImplicitFunctionValue<<<grid,block>>>(SubdivideVertexArray,SubdivideVertexArray_sz,
+                                                                RebuildArray,ReplaceNodeId,IsRoot,
+                                                                NodeArray,NodeArray_sz,
+                                                                d_x,EncodedNodeIdxInFunction,
+                                                                baseFunctions_d,
+                                                                SubdivideVvalue,isoValue);
+    cudaDeviceSynchronize();
+
+//    for(int j=0;j<8;++j){
+//        printf("%f\n",SubdivideVvalue[j]);
+//    }
+
+    int *SubdivideVexNums=NULL;
+    nBytell = 1ll * sizeof(int) * SubdivideEdgeArray_sz;
+    CHECK(cudaMalloc((int**)&SubdivideVexNums,nBytell));
+    CHECK(cudaMemset(SubdivideVexNums,0,nBytell));
+
+    generateSubdivideVexNums<<<grid,block>>>(SubdivideEdgeArray,SubdivideEdgeArray_sz,
+                                             NodeArray_sz,
+                                             RebuildArray,SubdivideVvalue,
+                                             SubdivideVexNums);
+    cudaDeviceSynchronize();
+
+//    for(int j=0;j<SubdivideEdgeArray_sz;++j){
+//        if(SubdivideVexNums[j]!=0){
+//            printf("%d %d\n",j,SubdivideVexNums[j]);
+//        }
+//    }
+
+    int *SubdivideVexAddress=NULL;
+    nBytell = 1ll * sizeof(int) *SubdivideEdgeArray_sz;
+    CHECK(cudaMallocManaged((int**)&SubdivideVexAddress,nBytell));
+    CHECK(cudaMemset(SubdivideVexAddress,0,nBytell));
+
+    thrust::device_ptr<int> SubdivideVexNums_ptr = thrust::device_pointer_cast<int>(SubdivideVexNums);
+    thrust::device_ptr<int> SubdivideVexAddress_ptr = thrust::device_pointer_cast<int>(SubdivideVexAddress);
+
+    thrust::exclusive_scan(SubdivideVexNums_ptr,SubdivideVexNums_ptr + SubdivideEdgeArray_sz, SubdivideVexAddress_ptr);
+    cudaDeviceSynchronize();
+
+
+    int SubdivideLastVexAddr;
+    int SubdivideLastVexNums;
+    CHECK(cudaMemcpy(&SubdivideLastVexAddr,SubdivideVexAddress+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(&SubdivideLastVexNums,SubdivideVexNums+SubdivideEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+
+    int SubdivideAllVexNums = SubdivideLastVexAddr + SubdivideLastVexNums;
+
+    int *SubdivideTriNums=NULL;
+    nBytell = 1ll * sizeof(int) * depthNodeCount[maxDepth_h];
+    CHECK(cudaMalloc((int**)&SubdivideTriNums,nBytell));
+    CHECK(cudaMemset(SubdivideTriNums,0,nBytell));
+
+    int *SubdivideCubeCatagory = NULL;
+    nBytell = 1ll * sizeof(int) * depthNodeCount[maxDepth_h];
+    CHECK(cudaMalloc((int**)&SubdivideCubeCatagory,nBytell));
+    CHECK(cudaMemset(SubdivideCubeCatagory,0,nBytell));
+
+    generateTriNums<<<grid,block>>>(RebuildArray,
+                                    depthNodeAddress[maxDepth_h],rebuildNums,
+                                    SubdivideVvalue,
+                                    SubdivideTriNums,SubdivideCubeCatagory);
+    cudaDeviceSynchronize();
+
+    int *SubdivideTriAddress=NULL;
+    nBytell = 1ll * sizeof(int) * depthNodeCount[maxDepth_h];
+    CHECK(cudaMalloc((int**)&SubdivideTriAddress,nBytell));
+    CHECK(cudaMemset(SubdivideTriAddress,0,nBytell));
+
+    thrust::device_ptr<int> SubdivideTriNums_ptr = thrust::device_pointer_cast<int>(SubdivideTriNums);
+    thrust::device_ptr<int> SubdivideTriAddress_ptr = thrust::device_pointer_cast<int>(SubdivideTriAddress);
+
+    thrust::exclusive_scan(SubdivideTriNums_ptr,SubdivideTriNums_ptr + depthNodeCount[maxDepth_h],SubdivideTriAddress_ptr);
+    cudaDeviceSynchronize();
+
+    Point3D<float> *SubdivideVertexBuffer = NULL;
+    nBytell = 1ll * sizeof(Point3D<float>) * SubdivideAllVexNums;
+    CHECK(cudaMallocManaged((Point3D<float>**)&SubdivideVertexBuffer,nBytell));
+
+    EdgeNode * SubdivideValidEdgeArray = NULL;
+    nBytell = 1ll * sizeof(EdgeNode) * SubdivideAllVexNums;
+    CHECK(cudaMalloc((EdgeNode**)&SubdivideValidEdgeArray,nBytell));
+    thrust::device_ptr<EdgeNode> SubdivideValidEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(SubdivideValidEdgeArray);
+    SubdivideEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(SubdivideEdgeArray);
+    thrust::device_ptr<EdgeNode> SubdivideValidEdgeArray_end = thrust::copy_if(SubdivideEdgeArray_ptr,SubdivideEdgeArray_ptr + SubdivideEdgeArray_sz,SubdivideVexNums_ptr,SubdivideValidEdgeArray_ptr,validVexNums());
+    cudaDeviceSynchronize();
+
+    int *SubdivideValidVexAddress = NULL;
+    nBytell = 1ll * sizeof(int) * SubdivideAllVexNums;
+    CHECK(cudaMalloc((int**)&SubdivideValidVexAddress,nBytell));
+    thrust::device_ptr<int> SubdivideValidVexAddress_ptr = thrust::device_pointer_cast<int>(SubdivideValidVexAddress);
+    thrust::device_ptr<int> SubdivideValidVexAddress_end = thrust::copy_if(SubdivideVexAddress_ptr,SubdivideVexAddress_ptr + SubdivideEdgeArray_sz,SubdivideVexNums_ptr,SubdivideValidVexAddress_ptr,validVexNums());
+    cudaDeviceSynchronize();
+
+    generateSubdivideIntersectionPoint<<<grid,block>>>(SubdivideValidEdgeArray,SubdivideAllVexNums,
+                                                       SubdivideVertexArray,RebuildArray,
+                                                       NodeArray_sz,
+                                                       SubdivideValidVexAddress,SubdivideVvalue,
+                                                       SubdivideVertexBuffer);
+    cudaDeviceSynchronize();
+
+    cudaFree(SubdivideValidEdgeArray);
+    cudaFree(SubdivideValidVexAddress);
+
+    int SubdivideLastTriAddr;
+    int SubdivideLastTriNums;
+    CHECK(cudaMemcpy(&SubdivideLastTriAddr,SubdivideTriAddress+depthNodeCount[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
+    CHECK(cudaMemcpy(&SubdivideLastTriNums,SubdivideTriNums+depthNodeCount[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
+    int SubdivideAllTriNums = SubdivideLastTriAddr + SubdivideLastTriNums;
+
+
+    int *SubdivideTriangleBuffer=NULL;
+    nBytell = 1ll * sizeof(int) * 3 * SubdivideAllTriNums;
+    CHECK(cudaMallocManaged((int**)&SubdivideTriangleBuffer,nBytell));
+
+    generateSubdivideTrianglePos<<<grid,block>>>(RebuildArray,depthNodeAddress[maxDepth_h],rebuildNums,
+                                                 SubdivideTriNums,SubdivideCubeCatagory,
+                                                 SubdivideVexAddress,
+                                                 SubdivideTriAddress,SubdivideTriangleBuffer);
+    cudaDeviceSynchronize();
+
+    insertTriangle(SubdivideVertexBuffer,SubdivideAllVexNums,
+                   SubdivideTriangleBuffer,SubdivideAllTriNums,
+                   mesh);
+
+    printf("SubdivideAllVexNums:%d SubdivideAllTriNums:%d\n",SubdivideAllVexNums,SubdivideAllTriNums);
+
+    cudaFree(fixedDepthNums);
+    cudaFree(depthNodeAddress_d);
+    cudaFree(fixedDepthAddress);
+    cudaFree(RebuildArray);
 
     PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
 }

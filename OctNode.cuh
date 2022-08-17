@@ -35,6 +35,41 @@ public:
     int hasIntersection;
 };
 
+class EasyOctNode{
+public:
+    int key;
+    int parent;
+    int children[8];
+    int neighs[27];
+
+    // (real idx) + 1,
+    // idx start from (0 + 1)
+    // encode the vertices idx?
+    int vertices[8];
+
+    // (real idx) + 1,
+    // idx start from (0 + 1)
+    int edges[12];
+
+    __device__ EasyOctNode& operator = (const OctNode& n){
+        key = n.key;
+        parent = n.parent;
+#pragma unroll
+        for(int i=0;i<8;++i){
+            children[i] = n.children[i];
+            vertices[i] = n.vertices[i];
+        }
+#pragma unroll
+        for(int i=0;i<27;++i){
+            neighs[i] = n.neighs[i];
+        }
+#pragma unroll
+        for(int i=0;i<12;++i){
+            edges[i] = n.edges[i];
+        }
+    }
+};
+
 class VertexNode{
 public:
     Point3D<float> pos;
