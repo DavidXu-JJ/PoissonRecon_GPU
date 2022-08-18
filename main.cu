@@ -3884,7 +3884,7 @@ int main() {
 
         EasyOctNode *SubdivideArray=NULL;
         nByte = 1ll * sizeof(EasyOctNode) * SubdivideArray_sz;
-        CHECK(cudaMallocManaged((EasyOctNode**)&SubdivideArray,nByte));
+        CHECK(cudaMalloc((EasyOctNode**)&SubdivideArray,nByte));
         CHECK(cudaMemset(SubdivideArray,0,nByte));
 
         CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&NodeArray_sz,sizeof(int),cudaMemcpyHostToDevice));
@@ -4336,7 +4336,7 @@ int main() {
 
         EasyOctNode *RebuildArray = NULL;
         long long nBytell = 1ll * sizeof(EasyOctNode) * rebuildNums;
-        CHECK(cudaMallocManaged((EasyOctNode **) &RebuildArray, nBytell));
+        CHECK(cudaMalloc((EasyOctNode **) &RebuildArray, nBytell));
         CHECK(cudaMemset(RebuildArray, 0, nBytell));
 
         int *RebuildDepthBuffer = NULL;
