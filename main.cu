@@ -3849,6 +3849,23 @@ int main() {
         SubdivideDepthAddress[i]=SubdivideDepthAddress[i-1]+SubdivideDepthCount[i-1];
     }
 
+    int minSubdivideRootDepth;
+    CHECK(cudaMemcpy(&minSubdivideRootDepth,SubdivideDepthBuffer,sizeof(int),cudaMemcpyDeviceToHost));
+    int maxNodeNums = (qpow(8,(maxDepth_h-minSubdivideRootDepth+1) )-1 )/7;
+
+    EasyOctNode *SubdivideArray=NULL;
+    nByte = 1ll * sizeof(EasyOctNode) * maxNodeNums;
+    CHECK(cudaMalloc((EasyOctNode**)&SubdivideArray,nByte));
+
+    int *SubdivideArrayDepthBuffer=NULL;
+    nByte = 1ll * sizeof(int) * maxNodeNums;
+    CHECK(cudaMalloc((int**)&SubdivideArrayDepthBuffer,nByte));
+
+    Point3D<float> *SubdivideArrayCenterBuffer=NULL;
+    nByte = 1ll * sizeof(Point3D<float>) * maxNodeNums;
+    CHECK(cudaMalloc((Point3D<float>**)&SubdivideArrayCenterBuffer,nByte));
+
+
 
     int finerDepth = 6;
     for(int i=0;i<SubdivideNum;++i){
@@ -3882,21 +3899,20 @@ int main() {
         int rootKey = rootNode.key;
         int rootSonKey =( rootKey >> (3 * (maxDepth-rootDepth)) ) & 7 ;
 
-        EasyOctNode *SubdivideArray=NULL;
         nByte = 1ll * sizeof(EasyOctNode) * SubdivideArray_sz;
-        CHECK(cudaMalloc((EasyOctNode**)&SubdivideArray,nByte));
+//        CHECK(cudaMalloc((EasyOctNode**)&SubdivideArray,nByte));
         CHECK(cudaMemset(SubdivideArray,0,nByte));
 
         CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&NodeArray_sz,sizeof(int),cudaMemcpyHostToDevice));
         CHECK(cudaMemcpy(&SubdivideArray[0].parent,&rootParent,sizeof(int),cudaMemcpyHostToDevice));
 
-        int *SubdivideArrayDepthBuffer=NULL;
-        nByte = 1ll * sizeof(int) * SubdivideArray_sz;
-        CHECK(cudaMalloc((int**)&SubdivideArrayDepthBuffer,nByte));
+//        int *SubdivideArrayDepthBuffer=NULL;
+//        nByte = 1ll * sizeof(int) * SubdivideArray_sz;
+//        CHECK(cudaMalloc((int**)&SubdivideArrayDepthBuffer,nByte));
 
-        Point3D<float> *SubdivideArrayCenterBuffer=NULL;
-        nByte = 1ll * sizeof(Point3D<float>) * SubdivideArray_sz;
-        CHECK(cudaMalloc((Point3D<float>**)&SubdivideArrayCenterBuffer,nByte));
+//        Point3D<float> *SubdivideArrayCenterBuffer=NULL;
+//        nByte = 1ll * sizeof(Point3D<float>) * SubdivideArray_sz;
+//        CHECK(cudaMalloc((Point3D<float>**)&SubdivideArrayCenterBuffer,nByte));
 
         singleRebuildArray<<<grid,block>>>(NodeArray_sz,
                                            SubdivideNode,SubdivideDepthBuffer,i,
@@ -4057,13 +4073,6 @@ int main() {
 
         // ----------------------------------------------------
 
-//        int *SubdivideEncodedNodeIdxInFunction=NULL;
-//        nByte = 1ll * sizeof(int) * SubdivideArray_sz;
-//        CHECK(cudaMalloc((int**)&SubdivideEncodedNodeIdxInFunction,nByte));
-//        precomputeEncodedFunctionIdxOfNode<<<grid,block>>>(SubdivideArray,SubdivideArray_sz,
-//                                                           SubdivideArrayDepthBuffer,SubdivideEncodedNodeIdxInFunction);
-//        cudaDeviceSynchronize();
-
         float *SubdivideVvalue = NULL;
         nByte = 1ll * sizeof(float) * SubdivideVertexArray_sz;
         CHECK(cudaMalloc((float**)&SubdivideVvalue,nByte));
@@ -4110,9 +4119,6 @@ int main() {
 
         if(SubdivideAllVexNums == 0){
             CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&rootId,sizeof(int),cudaMemcpyHostToDevice));
-            cudaFree(SubdivideArray);
-            cudaFree(SubdivideArrayCenterBuffer);
-            cudaFree(SubdivideArrayDepthBuffer);
             cudaFree(SubdivideVertexArray);
             cudaFree(SubdivideEdgeArray);
             cudaFree(SubdivideVvalue);
@@ -4120,14 +4126,6 @@ int main() {
             cudaFree(SubdivideVexAddress);
             continue;
         }
-
-//        for(int j=0;j<500;++j){
-//            printf("vexNums:%d\n",SubdivideVexNums[j]);
-//        }
-//        for(int j=0;j<500;++j){
-//            printf("vexAddress:%d\n",SubdivideVexAddress[j]);
-//        }
-
 
         int *SubdivideTriNums=NULL;
         nByte = 1ll * sizeof(int) * fixedDepthNodeNum[maxDepth_h];
@@ -4159,10 +4157,6 @@ int main() {
         Point3D<float> *SubdivideVertexBuffer = NULL;
         nByte = 1ll * sizeof(Point3D<float>) * SubdivideAllVexNums;
         CHECK(cudaMallocManaged((Point3D<float>**)&SubdivideVertexBuffer,nByte));
-
-//        for(int j=0;j<SubdivideEdgeArray_sz;++j){
-//            printf("%d %d\n",j,SubdivideVexAddress[j]);
-//        }
 
         EdgeNode * SubdivideValidEdgeArray = NULL;
         nByte = 1ll * sizeof(EdgeNode) * SubdivideAllVexNums;
@@ -4265,9 +4259,6 @@ int main() {
 
 
         CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&rootId,sizeof(int),cudaMemcpyHostToDevice));
-        cudaFree(SubdivideArray);
-        cudaFree(SubdivideArrayCenterBuffer);
-        cudaFree(SubdivideArrayDepthBuffer);
         cudaFree(SubdivideVertexArray);
         cudaFree(SubdivideEdgeArray);
         cudaFree(SubdivideVvalue);
@@ -4279,6 +4270,10 @@ int main() {
         cudaFree(SubdivideVertexBuffer);
         cudaFree(SubdivideTriangleBuffer);
     }
+
+    cudaFree(SubdivideArray);
+    cudaFree(SubdivideArrayCenterBuffer);
+    cudaFree(SubdivideArrayDepthBuffer);
 
     double mid14 = cpuSecond();
     printf("GPU processing coarse subdivide nodes takes %lfs\n",mid14-mid13);
