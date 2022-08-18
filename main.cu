@@ -3255,6 +3255,8 @@ int main() {
     Point3D<float> center;
     float scale;
 
+    double project_st=cpuSecond();
+
     // the number of nodes at maxDepth is very large, some maintaining of their info is time-consuming
     pipelineBuildNodeArray(fileName,center,scale,count,NodeArray_sz,
                            NodeArrayCount_h,BaseAddressArray,
@@ -3812,10 +3814,7 @@ int main() {
 
     int SubdivideNum = SubdivideNode_end - SubdivideNode_ptr;
 
-//    for(int i=0;i<10;++i){
-//        std::cout<<std::bitset<32>(SubdivideNode[i].key)<<" parent:"<< SubdivideNode[i].parent;
-//        std::cout<<std::endl;
-//    }
+    printf("Starting processing the subdivide node\n");
 
     printf("SubdivideNum:%d\n",SubdivideNum);
 
@@ -3857,7 +3856,6 @@ int main() {
         int rootDepth;
         CHECK(cudaMemcpy(&rootDepth,SubdivideDepthBuffer+i,sizeof(int),cudaMemcpyDeviceToHost));
         if(rootDepth >= finerDepth){
-//            finerDepthStart = i;
             break;
         }
         int SubdivideArray_sz = (qpow(8,(maxDepth_h-rootDepth+1) )-1 )/7;
@@ -4282,7 +4280,11 @@ int main() {
         cudaFree(SubdivideTriangleBuffer);
     }
 
+    double mid14 = cpuSecond();
+    printf("GPU processing coarse subdivide nodes takes %lfs\n",mid14-mid13);
+
     for(int i = finerDepth;i<maxDepth_h;++i) {
+        printf("Start the %d depth finer subdivide nodes processing\n",i);
         int *fixedDepthNums = NULL;
         int finerDepthStart = SubdivideDepthAddress[i];
         int finerSubdivideNum = SubdivideDepthCount[i];
@@ -4311,7 +4313,7 @@ int main() {
         depthNodeAddress[0] = 0;
         for (int depth = 1; depth <= maxDepth_h; ++depth) {
             depthNodeAddress[depth] = depthNodeAddress[depth - 1] + depthNodeCount[depth - 1];
-            printf("%d %d %d\n", depth, depthNodeAddress[depth], depthNodeCount[depth]);
+//            printf("%d %d %d\n", depth, depthNodeAddress[depth], depthNodeCount[depth]);
         }
         printf("rebuildNums:%d\n", rebuildNums);
 
@@ -4364,9 +4366,6 @@ int main() {
                                            ReplaceNodeId, IsRoot);
         cudaDeviceSynchronize();
 
-//    for(int j=0;j<10;++j){
-//        printf("%d IsRoot:%d ReplaceId:%d\n",j,IsRoot[j],ReplaceNodeId[j]);
-//    }
 
         for (int j = finerDepth; j <= maxDepth_h; ++j) {
             computeRebuildNeighbor<<<grid, block>>>(RebuildArray, depthNodeAddress[j],
@@ -4705,5 +4704,14 @@ int main() {
         cudaFree(RebuildTriangleBuffer);
     }
 
+    double mid15 = cpuSecond();
+    printf("GPU processing finer subdivide nodes takes %lfs\n",mid15-mid14);
+
     PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
+
+    double mid16 = cpuSecond();
+    printf("Output ply files takes %lfs\n",mid16-mid15);
+
+    printf("The whole project takes %lfs (including I/O)\n",mid16-project_st);
+
 }
