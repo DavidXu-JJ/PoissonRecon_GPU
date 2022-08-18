@@ -3946,27 +3946,6 @@ int main() {
                                                  SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
 
-//        for (int j = 0; j < 10; ++j) {
-//            std::cout << j<<std::endl;
-//            std::cout << std::bitset<32>(SubdivideArray[j].key) << " parent:" << SubdivideArray[j].parent
-//                      << std::endl;
-//            for (int k = 0; k < 8; ++k) {
-//                std::cout << "children[" << k << "]:" << SubdivideArray[j].children[k] << " ";
-//            }
-//            std::cout << std::endl;
-//            for (int k = 0; k < 27; ++k) {
-//                std::cout << "neigh:[" << k << "]" << SubdivideArray[j].neighs[k] << " ";
-//            }
-//            std::cout << std::endl;
-//            for (int k = 0; k < 8; ++k) {
-//                std::cout << "vertices:[" << k << "]" << SubdivideArray[j].vertices[k] << " ";
-//            }
-//            std::cout << std::endl;
-//        }
-
-//        for(int j=0;j<100;++j){
-//            printf("%d owner:%d\n",j,SubdividePreVertexArray[j].ownerNodeIdx);
-//        }
 
         VertexNode *SubdivideVertexArray = NULL;
 //        nByte = 1ll * sizeof(VertexNode) * 8 * fixedDepthNodeNum[maxDepth_h];
@@ -3992,26 +3971,6 @@ int main() {
                                                            SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
 
-//        for (int j = fixedDepthNodeAddress[maxDepth_h]; j < fixedDepthNodeAddress[maxDepth_h] + 10; ++j) {
-//            std::cout << std::bitset<32>(SubdivideArray[j].key) << " parent:" << SubdivideArray[j].parent
-//                      << std::endl;
-//            for (int k = 0; k < 8; ++k) {
-//                std::cout << "children[" << k << "]:" << SubdivideArray[j].children[k] << " ";
-//            }
-//            std::cout << std::endl;
-//            for (int k = 0; k < 27; ++k) {
-//                std::cout << "neigh:[" << k << "]:" << SubdivideArray[j].neighs[k] << " ";
-//            }
-//            std::cout << std::endl;
-//            for(int k=0;k<8;++k){
-//                std::cout << "vertices["<<k<<"]:"<<SubdivideArray[j].vertices[k]<<" ";
-//            }
-//            std::cout << std::endl;
-////            for(int k=0;k<12;++k){
-////                std::cout << "edges["<<k<<"]:"<<SubdivideArray[j].edges[k]<<" ";
-////            }
-////            std::cout << std::endl;
-//        }
 
 
         // ----------------------------------------------------
@@ -4195,9 +4154,6 @@ int main() {
         CHECK(cudaMemcpy(&SubdivideLastTriNums,SubdivideTriNums+fixedDepthNodeNum[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
         int SubdivideAllTriNums = SubdivideLastTriAddr + SubdivideLastTriNums;
 
-//        for(int j=0;j<fixedDepthNodeNum[maxDepth_h];++j){
-//            printf("%d %d\n",j,SubdivideTriAddress[j]);
-//        }
 
         int *SubdivideTriangleBuffer=NULL;
         nByte = 1ll * sizeof(int) * 3 * SubdivideAllTriNums;
@@ -4214,7 +4170,7 @@ int main() {
                        SubdivideTriangleBuffer,SubdivideAllTriNums,
                        mesh);
 
-        printf("SubdivideAllVexNums:%d SubdivideAllTriNums:%d\n",SubdivideAllVexNums,SubdivideAllTriNums);
+//        printf("SubdivideAllVexNums:%d SubdivideAllTriNums:%d\n",SubdivideAllVexNums,SubdivideAllTriNums);
 
 
 
@@ -4270,7 +4226,7 @@ int main() {
             depthNodeAddress[depth] = depthNodeAddress[depth - 1] + depthNodeCount[depth - 1];
 //            printf("%d %d %d\n", depth, depthNodeAddress[depth], depthNodeCount[depth]);
         }
-        printf("rebuildNums:%d\n", rebuildNums);
+//        printf("rebuildNums:%d\n", rebuildNums);
 
         int *depthNodeAddress_d = NULL;
         nByte = 1ll * sizeof(int) * (maxDepth_h + 1);
@@ -4329,24 +4285,6 @@ int main() {
                                                     j);
             cudaDeviceSynchronize();
 
-//        for (int t = 0; t < 10; ++t) {
-//            std::cout << t<<std::endl;
-//            std::cout << std::bitset<32>(RebuildArray[t].key) << " parent:" << RebuildArray[t].parent
-//                      << std::endl;
-//            for (int k = 0; k < 8; ++k) {
-//                std::cout << "children[" << k << "]:" << RebuildArray[t].children[k] << " ";
-//            }
-//            std::cout << std::endl;
-//            for (int k = 0; k < 27; ++k) {
-//                std::cout << "neigh:[" << k << "]" << RebuildArray[t].neighs[k] << " ";
-//            }
-//            std::cout << std::endl;
-////            for (int k = 0; k < 8; ++k) {
-////                std::cout << "vertices:[" << k << "]" << RebuildArray[t].vertices[k] << " ";
-////            }
-////            std::cout << std::endl;
-//        }
-
         }
 
         // preVertexArray
@@ -4378,11 +4316,8 @@ int main() {
 
         int RebuildVertexArray_sz = RebuildVertexArray_end - RebuildVertexArray_ptr;
 
-        printf("RebuildVertexArray_sz:%d\n", RebuildVertexArray_sz);
+//        printf("RebuildVertexArray_sz:%d\n", RebuildVertexArray_sz);
 
-//    for(int j=0;j<10;++j){
-//            printf("%d owner:%d\n",j,SubdivideVertexArray[j].ownerNodeIdx);
-//    }
 
         maintainSubdivideVertexNodePointer<<<grid, block>>>(RebuildVertexArray, RebuildVertexArray_sz,
                                                             NodeArray_sz,
@@ -4496,7 +4431,7 @@ int main() {
 
         int RebuildAllVexNums = RebuildLastVexAddr + RebuildLastVexNums;
 
-        printf("RebuildAllVexNums:%d\n", RebuildAllVexNums);
+//        printf("RebuildAllVexNums:%d\n", RebuildAllVexNums);
 
 
         int *RebuildTriNums = NULL;
@@ -4577,7 +4512,7 @@ int main() {
         CHECK(cudaMemcpy(&RebuildLastTriNums,RebuildTriNums+depthNodeCount[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
         int RebuildAllTriNums = RebuildLastTriAddr + RebuildLastTriNums;
 
-        printf("RebuildAllTriNums:%d\n", RebuildAllTriNums);
+//        printf("RebuildAllTriNums:%d\n", RebuildAllTriNums);
 
         cudaFree(RebuildVexNums);
 
