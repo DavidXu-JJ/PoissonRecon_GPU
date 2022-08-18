@@ -3857,14 +3857,13 @@ int main() {
     }
 
 
-    int finerDepthStart;
-    int finerDepth = 8;
+    int finerDepth = 7;
     for(int i=0;i<SubdivideNum;++i){
 //        int rootDepth = SubdivideDepthBuffer[i];
         int rootDepth;
         CHECK(cudaMemcpy(&rootDepth,SubdivideDepthBuffer+i,sizeof(int),cudaMemcpyDeviceToHost));
         if(rootDepth >= finerDepth){
-            finerDepthStart = i;
+//            finerDepthStart = i;
             break;
         }
         int SubdivideArray_sz = (qpow(8,(maxDepth_h-rootDepth+1) )-1 )/7;
@@ -4289,93 +4288,98 @@ int main() {
         cudaFree(SubdivideTriangleBuffer);
     }
 
-    int *fixedDepthNums=NULL;
-    int finerSubdivideNum = SubdivideNum - finerDepthStart;
-    nByte = sizeof(int) * finerSubdivideNum * maxDepth_h;
-    CHECK(cudaMalloc((int**)&fixedDepthNums,nByte));
-    CHECK(cudaMemset(fixedDepthNums,0,nByte));
+    for(int i = finerDepth;i<maxDepth_h;++i) {
+        int *fixedDepthNums = NULL;
+        int finerDepthStart = SubdivideDepthAddress[i];
+        int finerSubdivideNum = SubdivideDepthCount[i];
+        nByte = sizeof(int) * finerSubdivideNum * maxDepth_h;
+        CHECK(cudaMalloc((int **) &fixedDepthNums, nByte));
+        CHECK(cudaMemset(fixedDepthNums, 0, nByte));
 
-    initFixedDepthNums<<<grid,block>>>(SubdivideNode,finerDepthStart,SubdivideNum,
-                                       SubdivideDepthBuffer,
-                                       fixedDepthNums);
-    cudaDeviceSynchronize();
-
-    thrust::device_ptr<int> fixedDepthNums_ptr=thrust::device_pointer_cast<int>(fixedDepthNums);
-    int rebuildNums=thrust::reduce(fixedDepthNums_ptr,fixedDepthNums_ptr+finerSubdivideNum * maxDepth_h);
-    cudaDeviceSynchronize();
-
-    int depthNodeCount[maxDepth_h+1];
-    depthNodeCount[0]=0;
-    for(int depth=1;depth<=maxDepth_h;++depth){
-        depthNodeCount[depth]=thrust::reduce(fixedDepthNums_ptr+(depth-1)*finerSubdivideNum,fixedDepthNums_ptr+depth*finerSubdivideNum);
-    }
-    cudaDeviceSynchronize();
-
-    int depthNodeAddress[maxDepth_h+1];
-    depthNodeAddress[0]=0;
-    for(int depth=1;depth<=maxDepth_h;++depth){
-        depthNodeAddress[depth] = depthNodeAddress[depth-1] + depthNodeCount[depth-1];
-        printf("%d %d %d\n",depth,depthNodeAddress[depth],depthNodeCount[depth]);
-    }
-    printf("rebuildNums:%d\n",rebuildNums);
-
-    int *depthNodeAddress_d=NULL;
-    nByte = sizeof(int) * (maxDepth_h+1);
-    CHECK(cudaMalloc((int**)&depthNodeAddress_d,nByte));
-    CHECK(cudaMemcpy(depthNodeAddress_d,depthNodeAddress,nByte,cudaMemcpyHostToDevice));
-
-    int *fixedDepthAddress=NULL;
-    nByte = sizeof(int) * finerSubdivideNum * maxDepth_h;
-    CHECK(cudaMalloc((int**)&fixedDepthAddress,nByte));
-    CHECK(cudaMemset(fixedDepthAddress,0,nByte));
-    for(int depth=1;depth<=maxDepth_h;++depth){
-        thrust::device_ptr<int> fixedDepthAddress_ptr=thrust::device_pointer_cast<int>(fixedDepthAddress+(depth-1)*finerSubdivideNum);
-        thrust::exclusive_scan(fixedDepthNums_ptr+(depth-1)*finerSubdivideNum,fixedDepthNums_ptr+depth*finerSubdivideNum,fixedDepthAddress_ptr);
+        initFixedDepthNums<<<grid, block>>>(SubdivideNode, finerDepthStart, finerDepthStart + finerSubdivideNum,
+                                            SubdivideDepthBuffer,
+                                            fixedDepthNums);
         cudaDeviceSynchronize();
-    }
 
-    OctNode *RebuildArray=NULL;
-    long long nBytell = 1ll * sizeof(OctNode) * rebuildNums;
-    CHECK(cudaMallocManaged((OctNode**)&RebuildArray,nBytell));
-    CHECK(cudaMemset(RebuildArray,0,nBytell));
+        thrust::device_ptr<int> fixedDepthNums_ptr = thrust::device_pointer_cast<int>(fixedDepthNums);
+        int rebuildNums = thrust::reduce(fixedDepthNums_ptr, fixedDepthNums_ptr + finerSubdivideNum * maxDepth_h);
+        cudaDeviceSynchronize();
 
-    int *RebuildDepthBuffer=NULL;
-    nBytell = 1ll * sizeof(int) * rebuildNums;
-    CHECK(cudaMalloc((int**)&RebuildDepthBuffer,nBytell));
+        int depthNodeCount[maxDepth_h + 1];
+        depthNodeCount[0] = 0;
+        for (int depth = 1; depth <= maxDepth_h; ++depth) {
+            depthNodeCount[depth] = thrust::reduce(fixedDepthNums_ptr + (depth - 1) * finerSubdivideNum,
+                                                   fixedDepthNums_ptr + depth * finerSubdivideNum);
+        }
+        cudaDeviceSynchronize();
 
-    Point3D<float> *RebuildCenterBuffer = NULL;
-    nBytell = 1ll * sizeof(Point3D<float>) * rebuildNums;
-    CHECK(cudaMallocManaged((Point3D<float>**)&RebuildCenterBuffer,nBytell));
+        int depthNodeAddress[maxDepth_h + 1];
+        depthNodeAddress[0] = 0;
+        for (int depth = 1; depth <= maxDepth_h; ++depth) {
+            depthNodeAddress[depth] = depthNodeAddress[depth - 1] + depthNodeCount[depth - 1];
+            printf("%d %d %d\n", depth, depthNodeAddress[depth], depthNodeCount[depth]);
+        }
+        printf("rebuildNums:%d\n", rebuildNums);
 
-    int *ReplaceNodeId=NULL;
-    nBytell = 1ll * sizeof(int) * rebuildNums;
-    CHECK(cudaMalloc((int**)&ReplaceNodeId,nBytell));
+        int *depthNodeAddress_d = NULL;
+        nByte = sizeof(int) * (maxDepth_h + 1);
+        CHECK(cudaMalloc((int **) &depthNodeAddress_d, nByte));
+        CHECK(cudaMemcpy(depthNodeAddress_d, depthNodeAddress, nByte, cudaMemcpyHostToDevice));
 
-    int *IsRoot=NULL;
-    nBytell = 1ll * sizeof(int) * rebuildNums;
-    CHECK(cudaMalloc((int**)&IsRoot,nBytell));
-    CHECK(cudaMemset(IsRoot,0,nBytell));
+        int *fixedDepthAddress = NULL;
+        nByte = sizeof(int) * finerSubdivideNum * maxDepth_h;
+        CHECK(cudaMalloc((int **) &fixedDepthAddress, nByte));
+        CHECK(cudaMemset(fixedDepthAddress, 0, nByte));
+        for (int depth = 1; depth <= maxDepth_h; ++depth) {
+            thrust::device_ptr<int> fixedDepthAddress_ptr = thrust::device_pointer_cast<int>(
+                    fixedDepthAddress + (depth - 1) * finerSubdivideNum);
+            thrust::exclusive_scan(fixedDepthNums_ptr + (depth - 1) * finerSubdivideNum,
+                                   fixedDepthNums_ptr + depth * finerSubdivideNum, fixedDepthAddress_ptr);
+            cudaDeviceSynchronize();
+        }
+
+        OctNode *RebuildArray = NULL;
+        long long nBytell = 1ll * sizeof(OctNode) * rebuildNums;
+        CHECK(cudaMallocManaged((OctNode **) &RebuildArray, nBytell));
+        CHECK(cudaMemset(RebuildArray, 0, nBytell));
+
+        int *RebuildDepthBuffer = NULL;
+        nBytell = 1ll * sizeof(int) * rebuildNums;
+        CHECK(cudaMalloc((int **) &RebuildDepthBuffer, nBytell));
+
+        Point3D<float> *RebuildCenterBuffer = NULL;
+        nBytell = 1ll * sizeof(Point3D<float>) * rebuildNums;
+        CHECK(cudaMallocManaged((Point3D<float> **) &RebuildCenterBuffer, nBytell));
+
+        int *ReplaceNodeId = NULL;
+        nBytell = 1ll * sizeof(int) * rebuildNums;
+        CHECK(cudaMalloc((int **) &ReplaceNodeId, nBytell));
+
+        int *IsRoot = NULL;
+        nBytell = 1ll * sizeof(int) * rebuildNums;
+        CHECK(cudaMalloc((int **) &IsRoot, nBytell));
+        CHECK(cudaMemset(IsRoot, 0, nBytell));
 
 
-    wholeRebuildArray<<<grid,block>>>(SubdivideNode,finerDepthStart,SubdivideNum,
-                                 NodeArray,NodeArray_sz,
-                                 SubdivideDepthBuffer,
-                                 depthNodeAddress_d,fixedDepthAddress,
-                                 RebuildArray,
-                                 RebuildDepthBuffer,RebuildCenterBuffer,
-                                 ReplaceNodeId,IsRoot);
-    cudaDeviceSynchronize();
+        wholeRebuildArray<<<grid, block>>>(SubdivideNode, finerDepthStart, finerDepthStart + finerSubdivideNum,
+                                           NodeArray, NodeArray_sz,
+                                           SubdivideDepthBuffer,
+                                           depthNodeAddress_d, fixedDepthAddress,
+                                           RebuildArray,
+                                           RebuildDepthBuffer, RebuildCenterBuffer,
+                                           ReplaceNodeId, IsRoot);
+        cudaDeviceSynchronize();
 
 //    for(int j=0;j<10;++j){
 //        printf("%d IsRoot:%d ReplaceId:%d\n",j,IsRoot[j],ReplaceNodeId[j]);
 //    }
 
-    for(int j=finerDepth;j<=maxDepth_h;++j) {
-        computeRebuildNeighbor<<<grid, block>>>(RebuildArray,depthNodeAddress[j],
-                                                depthNodeAddress[j] + depthNodeCount[j],
-                                                NodeArray,NodeArray_sz,
-                                                j);
-        cudaDeviceSynchronize();
+        for (int j = finerDepth; j <= maxDepth_h; ++j) {
+            computeRebuildNeighbor<<<grid, block>>>(RebuildArray, depthNodeAddress[j],
+                                                    depthNodeAddress[j] + depthNodeCount[j],
+                                                    NodeArray, NodeArray_sz,
+                                                    j);
+            cudaDeviceSynchronize();
 
 //        for (int t = 0; t < 10; ++t) {
 //            std::cout << t<<std::endl;
@@ -4395,44 +4399,49 @@ int main() {
 ////            std::cout << std::endl;
 //        }
 
-    }
+        }
 
-    // preVertexArray
-    VertexNode *RebuildPreVertexArray = NULL;
-    nByte = sizeof(VertexNode) * 8 * depthNodeCount[maxDepth_h];
-    CHECK(cudaMalloc((VertexNode**)&RebuildPreVertexArray,nByte));
-    CHECK(cudaMemset(RebuildPreVertexArray,0,nByte));
+        // preVertexArray
+        VertexNode *RebuildPreVertexArray = NULL;
+        nByte = sizeof(VertexNode) * 8 * depthNodeCount[maxDepth_h];
+        CHECK(cudaMalloc((VertexNode **) &RebuildPreVertexArray, nByte));
+        CHECK(cudaMemset(RebuildPreVertexArray, 0, nByte));
 
-    initSubdivideVertexOwner<<<grid,block>>>(NodeArray_sz,
-                                             RebuildArray,depthNodeAddress[maxDepth_h],rebuildNums,
-                                             RebuildPreVertexArray,
-                                             RebuildCenterBuffer);
-    cudaDeviceSynchronize();
+        initSubdivideVertexOwner<<<grid, block>>>(NodeArray_sz,
+                                                  RebuildArray, depthNodeAddress[maxDepth_h], rebuildNums,
+                                                  RebuildPreVertexArray,
+                                                  RebuildCenterBuffer);
+        cudaDeviceSynchronize();
 
-    VertexNode *RebuildVertexArray = NULL;
-    CHECK(cudaMalloc((VertexNode**)&RebuildVertexArray,nByte));
-    CHECK(cudaMemset(RebuildVertexArray,0,nByte));
-    thrust::device_ptr<VertexNode> RebuildPreVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(RebuildPreVertexArray);
-    thrust::device_ptr<VertexNode> RebuildVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(RebuildVertexArray);
-    thrust::device_ptr<VertexNode> RebuildVertexArray_end = thrust::copy_if(RebuildPreVertexArray_ptr, RebuildPreVertexArray_ptr + 8 * depthNodeCount[maxDepth_h],RebuildVertexArray_ptr,validVertex());
-    cudaDeviceSynchronize();
+        VertexNode *RebuildVertexArray = NULL;
+        CHECK(cudaMalloc((VertexNode **) &RebuildVertexArray, nByte));
+        CHECK(cudaMemset(RebuildVertexArray, 0, nByte));
+        thrust::device_ptr<VertexNode> RebuildPreVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(
+                RebuildPreVertexArray);
+        thrust::device_ptr<VertexNode> RebuildVertexArray_ptr = thrust::device_pointer_cast<VertexNode>(
+                RebuildVertexArray);
+        thrust::device_ptr<VertexNode> RebuildVertexArray_end = thrust::copy_if(RebuildPreVertexArray_ptr,
+                                                                                RebuildPreVertexArray_ptr +
+                                                                                8 * depthNodeCount[maxDepth_h],
+                                                                                RebuildVertexArray_ptr, validVertex());
+        cudaDeviceSynchronize();
 
-    cudaFree(RebuildPreVertexArray);
+        cudaFree(RebuildPreVertexArray);
 
-    int RebuildVertexArray_sz = RebuildVertexArray_end - RebuildVertexArray_ptr;
+        int RebuildVertexArray_sz = RebuildVertexArray_end - RebuildVertexArray_ptr;
 
-    printf("RebuildVertexArray_sz:%d\n",RebuildVertexArray_sz);
+        printf("RebuildVertexArray_sz:%d\n", RebuildVertexArray_sz);
 
 //    for(int j=0;j<10;++j){
 //            printf("%d owner:%d\n",j,SubdivideVertexArray[j].ownerNodeIdx);
 //    }
 
-    maintainSubdivideVertexNodePointer<<<grid,block>>>(RebuildVertexArray,RebuildVertexArray_sz,
-                                                       NodeArray_sz,
-                                                       RebuildArray,
-                                                       CenterBuffer,
-                                                       RebuildCenterBuffer);
-    cudaDeviceSynchronize();
+        maintainSubdivideVertexNodePointer<<<grid, block>>>(RebuildVertexArray, RebuildVertexArray_sz,
+                                                            NodeArray_sz,
+                                                            RebuildArray,
+                                                            CenterBuffer,
+                                                            RebuildCenterBuffer);
+        cudaDeviceSynchronize();
 
 //    for (int t = depthNodeAddress[maxDepth_h]; t < depthNodeAddress[maxDepth_h]+10; ++t) {
 //        std::cout << t<<std::endl;
@@ -4453,30 +4462,34 @@ int main() {
 //    }
 
 
-    // preEdgeArray
-    EdgeNode *RebuildPreEdgeArray = NULL;
-    nByte = sizeof(EdgeNode) * 12 * depthNodeCount[maxDepth_h];
-    CHECK(cudaMalloc((EdgeNode**)&RebuildPreEdgeArray,nByte));
-    CHECK(cudaMemset(RebuildPreEdgeArray,0,nByte));
+        // preEdgeArray
+        EdgeNode *RebuildPreEdgeArray = NULL;
+        nByte = sizeof(EdgeNode) * 12 * depthNodeCount[maxDepth_h];
+        CHECK(cudaMalloc((EdgeNode **) &RebuildPreEdgeArray, nByte));
+        CHECK(cudaMemset(RebuildPreEdgeArray, 0, nByte));
 
-    initSubdivideEdgeArray<<<grid,block>>>(RebuildArray,depthNodeAddress[maxDepth_h],rebuildNums,
-                                           NodeArray_sz,
-                                           RebuildPreEdgeArray,
-                                           RebuildCenterBuffer);
-    cudaDeviceSynchronize();
+        initSubdivideEdgeArray<<<grid, block>>>(RebuildArray, depthNodeAddress[maxDepth_h], rebuildNums,
+                                                NodeArray_sz,
+                                                RebuildPreEdgeArray,
+                                                RebuildCenterBuffer);
+        cudaDeviceSynchronize();
 
-    EdgeNode *RebuildEdgeArray=NULL;
-    CHECK(cudaMalloc((EdgeNode**)&RebuildEdgeArray,nByte));
-    CHECK(cudaMemset(RebuildEdgeArray,0,nByte));
+        EdgeNode *RebuildEdgeArray = NULL;
+        CHECK(cudaMalloc((EdgeNode **) &RebuildEdgeArray, nByte));
+        CHECK(cudaMemset(RebuildEdgeArray, 0, nByte));
 
-    thrust::device_ptr<EdgeNode> RebuildPreEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(RebuildPreEdgeArray);
-    thrust::device_ptr<EdgeNode> RebuildEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(RebuildEdgeArray);
-    thrust::device_ptr<EdgeNode> RebuildEdgeArray_end = thrust::copy_if(RebuildPreEdgeArray_ptr,RebuildPreEdgeArray_ptr + 12 * depthNodeCount[maxDepth_h],RebuildEdgeArray_ptr,validEdge());
-    cudaDeviceSynchronize();
+        thrust::device_ptr<EdgeNode> RebuildPreEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(
+                RebuildPreEdgeArray);
+        thrust::device_ptr<EdgeNode> RebuildEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(RebuildEdgeArray);
+        thrust::device_ptr<EdgeNode> RebuildEdgeArray_end = thrust::copy_if(RebuildPreEdgeArray_ptr,
+                                                                            RebuildPreEdgeArray_ptr +
+                                                                            12 * depthNodeCount[maxDepth_h],
+                                                                            RebuildEdgeArray_ptr, validEdge());
+        cudaDeviceSynchronize();
 
-    cudaFree(RebuildPreEdgeArray);
+        cudaFree(RebuildPreEdgeArray);
 
-    int RebuildEdgeArray_sz = RebuildEdgeArray_end - RebuildEdgeArray_ptr;
+        int RebuildEdgeArray_sz = RebuildEdgeArray_end - RebuildEdgeArray_ptr;
 
 //    for(int j=0;j<SubdivideEdgeArray_sz;++j){
 //        if(SubdivideEdgeArray[j].ownerNodeIdx < NodeArray_sz){
@@ -4485,12 +4498,12 @@ int main() {
 ////        printf("%d owner:%d\n",j,SubdivideEdgeArray[j].ownerNodeIdx);
 //    }
 
-    maintainSubdivideEdgeNodePointer<<<grid,block>>>(RebuildEdgeArray,RebuildEdgeArray_sz,
-                                                     NodeArray_sz,
-                                                     RebuildArray,
-                                                     CenterBuffer,
-                                                     RebuildCenterBuffer);
-    cudaDeviceSynchronize();
+        maintainSubdivideEdgeNodePointer<<<grid, block>>>(RebuildEdgeArray, RebuildEdgeArray_sz,
+                                                          NodeArray_sz,
+                                                          RebuildArray,
+                                                          CenterBuffer,
+                                                          RebuildCenterBuffer);
+        cudaDeviceSynchronize();
 
 //    for (int t = depthNodeAddress[maxDepth_h]; t < rebuildNums; ++t) {
 //        int chk=0;
@@ -4524,36 +4537,36 @@ int main() {
 //    }
 
 
-    float *RebuildVvalue = NULL;
-    nByte = sizeof(float) * RebuildVertexArray_sz;
-    CHECK(cudaMalloc((float**)&RebuildVvalue,nByte));
-    CHECK(cudaMemset(RebuildVvalue,0,nByte));
+        float *RebuildVvalue = NULL;
+        nByte = sizeof(float) * RebuildVertexArray_sz;
+        CHECK(cudaMalloc((float **) &RebuildVvalue, nByte));
+        CHECK(cudaMemset(RebuildVvalue, 0, nByte));
 
-    computeSubdivideVertexImplicitFunctionValue<<<grid,block>>>(RebuildVertexArray,RebuildVertexArray_sz,
-                                                                RebuildArray,ReplaceNodeId,IsRoot,
-                                                                NodeArray,NodeArray_sz,
-                                                                d_x,EncodedNodeIdxInFunction,
-                                                                baseFunctions_d,
-                                                                RebuildVvalue,isoValue);
-    cudaDeviceSynchronize();
+        computeSubdivideVertexImplicitFunctionValue<<<grid, block>>>(RebuildVertexArray, RebuildVertexArray_sz,
+                                                                     RebuildArray, ReplaceNodeId, IsRoot,
+                                                                     NodeArray, NodeArray_sz,
+                                                                     d_x, EncodedNodeIdxInFunction,
+                                                                     baseFunctions_d,
+                                                                     RebuildVvalue, isoValue);
+        cudaDeviceSynchronize();
 
-    cudaFree(ReplaceNodeId);
-    cudaFree(IsRoot);
+        cudaFree(ReplaceNodeId);
+        cudaFree(IsRoot);
 //    for(int j=0;j<SubdivideVertexArray_sz;++j){
 //        out2<<std::fixed<<SubdivideVvalue[j]<<std::endl;
 ////        printf("vvalue:%d %f\n",j,SubdivideVvalue[j]);
 //    }
 
-    int *RebuildVexNums=NULL;
-    nByte = sizeof(int) * RebuildEdgeArray_sz;
-    CHECK(cudaMalloc((int**)&RebuildVexNums,nByte));
-    CHECK(cudaMemset(RebuildVexNums,0,nByte));
+        int *RebuildVexNums = NULL;
+        nByte = sizeof(int) * RebuildEdgeArray_sz;
+        CHECK(cudaMalloc((int **) &RebuildVexNums, nByte));
+        CHECK(cudaMemset(RebuildVexNums, 0, nByte));
 
-    generateSubdivideVexNums<<<grid,block>>>(RebuildEdgeArray,RebuildEdgeArray_sz,
-                                             NodeArray_sz,
-                                             RebuildArray,RebuildVvalue,
-                                             RebuildVexNums);
-    cudaDeviceSynchronize();
+        generateSubdivideVexNums<<<grid, block>>>(RebuildEdgeArray, RebuildEdgeArray_sz,
+                                                  NodeArray_sz,
+                                                  RebuildArray, RebuildVvalue,
+                                                  RebuildVexNums);
+        cudaDeviceSynchronize();
 
 //    int vertexNum=0;
 //    for(int i=0;i<SubdivideEdgeArray_sz;++i){
@@ -4563,116 +4576,140 @@ int main() {
 //    }
 //    printf("%d\n",vertexNum);
 
-    int *RebuildVexAddress=NULL;
-    nByte = sizeof(int) * RebuildEdgeArray_sz;
-    CHECK(cudaMalloc((int**)&RebuildVexAddress,nByte));
-    CHECK(cudaMemset(RebuildVexAddress,0,nByte));
+        int *RebuildVexAddress = NULL;
+        nByte = sizeof(int) * RebuildEdgeArray_sz;
+        CHECK(cudaMalloc((int **) &RebuildVexAddress, nByte));
+        CHECK(cudaMemset(RebuildVexAddress, 0, nByte));
 
-    thrust::device_ptr<int> RebuildVexNums_ptr = thrust::device_pointer_cast<int>(RebuildVexNums);
-    thrust::device_ptr<int> RebuildVexAddress_ptr = thrust::device_pointer_cast<int>(RebuildVexAddress);
+        thrust::device_ptr<int> RebuildVexNums_ptr = thrust::device_pointer_cast<int>(RebuildVexNums);
+        thrust::device_ptr<int> RebuildVexAddress_ptr = thrust::device_pointer_cast<int>(RebuildVexAddress);
 
-    thrust::exclusive_scan(RebuildVexNums_ptr,RebuildVexNums_ptr + RebuildEdgeArray_sz, RebuildVexAddress_ptr);
-    cudaDeviceSynchronize();
+        thrust::exclusive_scan(RebuildVexNums_ptr, RebuildVexNums_ptr + RebuildEdgeArray_sz, RebuildVexAddress_ptr);
+        cudaDeviceSynchronize();
 
-    int RebuildLastVexAddr;
-    int RebuildLastVexNums;
-    CHECK(cudaMemcpy(&RebuildLastVexAddr,RebuildVexAddress+RebuildEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
-    CHECK(cudaMemcpy(&RebuildLastVexNums,RebuildVexNums+RebuildEdgeArray_sz-1,sizeof(int),cudaMemcpyDeviceToHost));
+        int RebuildLastVexAddr;
+        int RebuildLastVexNums;
+        CHECK(cudaMemcpy(&RebuildLastVexAddr, RebuildVexAddress + RebuildEdgeArray_sz - 1, sizeof(int),
+                         cudaMemcpyDeviceToHost));
+        CHECK(cudaMemcpy(&RebuildLastVexNums, RebuildVexNums + RebuildEdgeArray_sz - 1, sizeof(int),
+                         cudaMemcpyDeviceToHost));
 
-    int RebuildAllVexNums = RebuildLastVexAddr + RebuildLastVexNums;
+        int RebuildAllVexNums = RebuildLastVexAddr + RebuildLastVexNums;
 
-    printf("RebuildAllVexNums:%d\n",RebuildAllVexNums);
-
-
-    int *RebuildTriNums=NULL;
-    nByte = sizeof(int) * depthNodeCount[maxDepth_h];
-    CHECK(cudaMallocManaged((int**)&RebuildTriNums,nByte));
-    CHECK(cudaMemset(RebuildTriNums,0,nByte));
-
-    int *RebuildCubeCatagory = NULL;
-    nByte = sizeof(int) * depthNodeCount[maxDepth_h];
-    CHECK(cudaMalloc((int**)&RebuildCubeCatagory,nByte));
-    CHECK(cudaMemset(RebuildCubeCatagory,0,nByte));
-
-    generateTriNums<<<grid,block>>>(RebuildArray,
-                                    depthNodeAddress[maxDepth_h],rebuildNums,
-                                    RebuildVvalue,
-                                    RebuildTriNums,RebuildCubeCatagory);
-    cudaDeviceSynchronize();
-
-    int *RebuildTriAddress=NULL;
-    nByte = sizeof(int) * depthNodeCount[maxDepth_h];
-    CHECK(cudaMallocManaged((int**)&RebuildTriAddress,nByte));
-    CHECK(cudaMemset(RebuildTriAddress,0,nByte));
-
-    thrust::device_ptr<int> RebuildTriNums_ptr = thrust::device_pointer_cast<int>(RebuildTriNums);
-    thrust::device_ptr<int> RebuildTriAddress_ptr = thrust::device_pointer_cast<int>(RebuildTriAddress);
-
-    thrust::exclusive_scan(RebuildTriNums_ptr,RebuildTriNums_ptr + depthNodeCount[maxDepth_h],RebuildTriAddress_ptr);
-    cudaDeviceSynchronize();
-
-    Point3D<float> *RebuildVertexBuffer = NULL;
-    nByte = sizeof(Point3D<float>) * RebuildAllVexNums;
-    CHECK(cudaMallocManaged((Point3D<float>**)&RebuildVertexBuffer,nByte));
+        printf("RebuildAllVexNums:%d\n", RebuildAllVexNums);
 
 
-    EdgeNode * RebuildValidEdgeArray = NULL;
-    nByte = sizeof(EdgeNode) * RebuildAllVexNums;
-    CHECK(cudaMalloc((EdgeNode**)&RebuildValidEdgeArray,nByte));
-    thrust::device_ptr<EdgeNode> RebuildValidEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(RebuildValidEdgeArray);
-    RebuildEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(RebuildEdgeArray);
-    thrust::device_ptr<EdgeNode> RebuildValidEdgeArray_end = thrust::copy_if(RebuildEdgeArray_ptr,RebuildEdgeArray_ptr + RebuildEdgeArray_sz,RebuildVexNums_ptr,RebuildValidEdgeArray_ptr,validVexNums());
-    cudaDeviceSynchronize();
+        int *RebuildTriNums = NULL;
+        nByte = sizeof(int) * depthNodeCount[maxDepth_h];
+        CHECK(cudaMallocManaged((int **) &RebuildTriNums, nByte));
+        CHECK(cudaMemset(RebuildTriNums, 0, nByte));
 
-    int *RebuildValidVexAddress = NULL;
-    nByte = sizeof(int) * RebuildAllVexNums;
-    CHECK(cudaMalloc((int**)&RebuildValidVexAddress,nByte));
-    thrust::device_ptr<int> RebuildValidVexAddress_ptr = thrust::device_pointer_cast<int>(RebuildValidVexAddress);
-    thrust::device_ptr<int> RebuildValidVexAddress_end = thrust::copy_if(RebuildVexAddress_ptr,RebuildVexAddress_ptr + RebuildEdgeArray_sz,RebuildVexNums_ptr,RebuildValidVexAddress_ptr,validVexNums());
-    cudaDeviceSynchronize();
+        int *RebuildCubeCatagory = NULL;
+        nByte = sizeof(int) * depthNodeCount[maxDepth_h];
+        CHECK(cudaMalloc((int **) &RebuildCubeCatagory, nByte));
+        CHECK(cudaMemset(RebuildCubeCatagory, 0, nByte));
 
-    generateSubdivideIntersectionPoint<<<grid,block>>>(RebuildValidEdgeArray,RebuildAllVexNums,
-                                                       RebuildVertexArray,RebuildArray,
-                                                       NodeArray_sz,
-                                                       RebuildValidVexAddress,RebuildVvalue,
-                                                       RebuildVertexBuffer);
-    cudaDeviceSynchronize();
+        generateTriNums<<<grid, block>>>(RebuildArray,
+                                         depthNodeAddress[maxDepth_h], rebuildNums,
+                                         RebuildVvalue,
+                                         RebuildTriNums, RebuildCubeCatagory);
+        cudaDeviceSynchronize();
 
-    cudaFree(RebuildValidEdgeArray);
-    cudaFree(RebuildValidVexAddress);
-    cudaFree(RebuildVvalue);
+        int *RebuildTriAddress = NULL;
+        nByte = sizeof(int) * depthNodeCount[maxDepth_h];
+        CHECK(cudaMallocManaged((int **) &RebuildTriAddress, nByte));
+        CHECK(cudaMemset(RebuildTriAddress, 0, nByte));
+
+        thrust::device_ptr<int> RebuildTriNums_ptr = thrust::device_pointer_cast<int>(RebuildTriNums);
+        thrust::device_ptr<int> RebuildTriAddress_ptr = thrust::device_pointer_cast<int>(RebuildTriAddress);
+
+        thrust::exclusive_scan(RebuildTriNums_ptr, RebuildTriNums_ptr + depthNodeCount[maxDepth_h],
+                               RebuildTriAddress_ptr);
+        cudaDeviceSynchronize();
+
+        Point3D<float> *RebuildVertexBuffer = NULL;
+        nByte = sizeof(Point3D<float>) * RebuildAllVexNums;
+        CHECK(cudaMallocManaged((Point3D<float> **) &RebuildVertexBuffer, nByte));
 
 
-    int RebuildLastTriAddr;
-    int RebuildLastTriNums;
-    RebuildLastTriAddr = RebuildTriAddress[depthNodeCount[maxDepth_h]-1];
-    RebuildLastTriNums = RebuildTriNums[depthNodeCount[maxDepth_h]-1];
+        EdgeNode *RebuildValidEdgeArray = NULL;
+        nByte = sizeof(EdgeNode) * RebuildAllVexNums;
+        CHECK(cudaMalloc((EdgeNode **) &RebuildValidEdgeArray, nByte));
+        thrust::device_ptr<EdgeNode> RebuildValidEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(
+                RebuildValidEdgeArray);
+        RebuildEdgeArray_ptr = thrust::device_pointer_cast<EdgeNode>(RebuildEdgeArray);
+        thrust::device_ptr<EdgeNode> RebuildValidEdgeArray_end = thrust::copy_if(RebuildEdgeArray_ptr,
+                                                                                 RebuildEdgeArray_ptr +
+                                                                                 RebuildEdgeArray_sz,
+                                                                                 RebuildVexNums_ptr,
+                                                                                 RebuildValidEdgeArray_ptr,
+                                                                                 validVexNums());
+        cudaDeviceSynchronize();
+
+        int *RebuildValidVexAddress = NULL;
+        nByte = sizeof(int) * RebuildAllVexNums;
+        CHECK(cudaMalloc((int **) &RebuildValidVexAddress, nByte));
+        thrust::device_ptr<int> RebuildValidVexAddress_ptr = thrust::device_pointer_cast<int>(RebuildValidVexAddress);
+        thrust::device_ptr<int> RebuildValidVexAddress_end = thrust::copy_if(RebuildVexAddress_ptr,
+                                                                             RebuildVexAddress_ptr +
+                                                                             RebuildEdgeArray_sz, RebuildVexNums_ptr,
+                                                                             RebuildValidVexAddress_ptr,
+                                                                             validVexNums());
+        cudaDeviceSynchronize();
+
+        generateSubdivideIntersectionPoint<<<grid, block>>>(RebuildValidEdgeArray, RebuildAllVexNums,
+                                                            RebuildVertexArray, RebuildArray,
+                                                            NodeArray_sz,
+                                                            RebuildValidVexAddress, RebuildVvalue,
+                                                            RebuildVertexBuffer);
+        cudaDeviceSynchronize();
+
+        cudaFree(RebuildValidEdgeArray);
+        cudaFree(RebuildValidVexAddress);
+        cudaFree(RebuildVvalue);
+
+
+        int RebuildLastTriAddr;
+        int RebuildLastTriNums;
+        RebuildLastTriAddr = RebuildTriAddress[depthNodeCount[maxDepth_h] - 1];
+        RebuildLastTriNums = RebuildTriNums[depthNodeCount[maxDepth_h] - 1];
 //    CHECK(cudaMemcpy(&RebuildLastTriAddr,RebuildTriAddress+depthNodeCount[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
 //    CHECK(cudaMemcpy(&RebuildLastTriNums,RebuildTriNums+depthNodeCount[maxDepth_h]-1,sizeof(int),cudaMemcpyDeviceToHost));
-    int RebuildAllTriNums = RebuildLastTriAddr + RebuildLastTriNums;
+        int RebuildAllTriNums = RebuildLastTriAddr + RebuildLastTriNums;
 
-    printf("RebuildAllTriNums:%d\n",RebuildAllTriNums);
+        printf("RebuildAllTriNums:%d\n", RebuildAllTriNums);
 
-    cudaFree(RebuildVexNums);
+        cudaFree(RebuildVexNums);
 
-    int *RebuildTriangleBuffer=NULL;
-    nByte = sizeof(int) * 3 * RebuildAllTriNums;
-    CHECK(cudaMallocManaged((int**)&RebuildTriangleBuffer,nByte));
+        int *RebuildTriangleBuffer = NULL;
+        nByte = sizeof(int) * 3 * RebuildAllTriNums;
+        CHECK(cudaMallocManaged((int **) &RebuildTriangleBuffer, nByte));
 
-    generateSubdivideTrianglePos<<<grid,block>>>(RebuildArray,depthNodeAddress[maxDepth_h],rebuildNums,
-                                                 RebuildTriNums,RebuildCubeCatagory,
-                                                 RebuildVexAddress,
-                                                 RebuildTriAddress,RebuildTriangleBuffer);
-    cudaDeviceSynchronize();
+        generateSubdivideTrianglePos<<<grid, block>>>(RebuildArray, depthNodeAddress[maxDepth_h], rebuildNums,
+                                                      RebuildTriNums, RebuildCubeCatagory,
+                                                      RebuildVexAddress,
+                                                      RebuildTriAddress, RebuildTriangleBuffer);
+        cudaDeviceSynchronize();
 
-    insertTriangle(RebuildVertexBuffer,RebuildAllVexNums,
-                   RebuildTriangleBuffer,RebuildAllTriNums,
-                   mesh);
+        insertTriangle(RebuildVertexBuffer, RebuildAllVexNums,
+                       RebuildTriangleBuffer, RebuildAllTriNums,
+                       mesh);
 
-    cudaFree(fixedDepthNums);
-    cudaFree(depthNodeAddress_d);
-    cudaFree(fixedDepthAddress);
-    cudaFree(RebuildArray);
+        cudaFree(fixedDepthNums);
+        cudaFree(depthNodeAddress_d);
+        cudaFree(fixedDepthAddress);
+        cudaFree(RebuildArray);
+        cudaFree(RebuildDepthBuffer);
+        cudaFree(RebuildCenterBuffer);
+        cudaFree(RebuildVertexArray);
+        cudaFree(RebuildEdgeArray);
+        cudaFree(RebuildVexAddress);
+        cudaFree(RebuildTriNums);
+        cudaFree(RebuildCubeCatagory);
+        cudaFree(RebuildTriAddress);
+        cudaFree(RebuildVertexBuffer);
+        cudaFree(RebuildTriangleBuffer);
+    }
 
     PlyWriteTriangles(outName,&mesh, PLY_ASCII,center,scale,NULL,0);
 }
