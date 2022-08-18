@@ -2316,7 +2316,7 @@ __global__ void computeVertexImplicitFunctionValue(VertexNode *VertexArray,int V
 }
 
 __global__ void computeSubdivideVertexImplicitFunctionValue(VertexNode *SubdivideVertexArray,int SubdivideVertexArray_sz,
-                                                            OctNode *SubdivideArray, int rootId,
+                                                            EasyOctNode *SubdivideArray, int rootId,
                                                             OctNode *NodeArray,int NodeArray_sz,
                                                             float *d_x, int *EncodedNodeIdxInFunction,
                                                             ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d,
@@ -3103,7 +3103,7 @@ __device__ int getSubdivideDepth(const int &rootDepth,const int &idx){
 
 __global__ void singleRebuildArray(int NodeArray_sz,
                                    OctNode *SubdivideNode,int *SubdivideDepthBuffer,int iterRound,
-                                   OctNode *SubdivideArray,int SubdivideArray_sz,
+                                   EasyOctNode *SubdivideArray,int SubdivideArray_sz,
                                    int *SubdivideArrayDepthBuffer,Point3D<float> *SubdivideArrayCenterBuffer)
 {
     int stride=gridDim.x * gridDim.y * gridDim.z * blockDim.x * blockDim.y * blockDim.z;
@@ -3882,9 +3882,9 @@ int main() {
         int rootKey = rootNode.key;
         int rootSonKey =( rootKey >> (3 * (maxDepth-rootDepth)) ) & 7 ;
 
-        OctNode *SubdivideArray=NULL;
-        nByte = 1ll * sizeof(OctNode) * SubdivideArray_sz;
-        CHECK(cudaMallocManaged((OctNode**)&SubdivideArray,nByte));
+        EasyOctNode *SubdivideArray=NULL;
+        nByte = 1ll * sizeof(EasyOctNode) * SubdivideArray_sz;
+        CHECK(cudaMallocManaged((EasyOctNode**)&SubdivideArray,nByte));
         CHECK(cudaMemset(SubdivideArray,0,nByte));
 
         CHECK(cudaMemcpy(&NodeArray[rootParent].children[rootSonKey],&NodeArray_sz,sizeof(int),cudaMemcpyHostToDevice));
