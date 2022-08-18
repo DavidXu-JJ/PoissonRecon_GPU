@@ -38,14 +38,6 @@ __device__ __host__ int qpow(int p,int q) {
     return res;
 }
 
-__host__ dim3 getGrid(const int &Nums) {
-    if(Nums == 0) {
-        return (32,32);
-    }
-    dim3 grid = (std::min(Nums / 1024 , 32) ,Nums/32768);
-    return grid;
-}
-
 //#define FORCE_UNIT_NORMALS 1
 __global__ void outputDeviceArray(Point3D<float> *d_addr,int size) {
     printf("print array:\n");
@@ -3924,14 +3916,12 @@ int main() {
 //        nByte = 1ll * sizeof(Point3D<float>) * SubdivideArray_sz;
 //        CHECK(cudaMalloc((Point3D<float>**)&SubdivideArrayCenterBuffer,nByte));
 
-        grid = getGrid(SubdivideArray_sz);
         singleRebuildArray<<<grid,block>>>(NodeArray_sz,
                                            SubdivideNode,SubdivideDepthBuffer,i,
                                            SubdivideArray,SubdivideArray_sz,
                                            SubdivideArrayDepthBuffer,SubdivideArrayCenterBuffer);
         cudaDeviceSynchronize();
 
-        grid = (32,32);
 
         for(int j=rootDepth;j<=maxDepth_h;++j) {
             computeRebuildNeighbor<<<grid, block>>>(SubdivideArray,fixedDepthNodeAddress[j],
