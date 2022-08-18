@@ -1217,7 +1217,7 @@ __host__ void LaplacianIteration(int *BaseAddressArray_h, int *NodeArrayCount_h,
                                  float *&d_x)
 {
     float total_time=0.0f;
-    dim3 grid=32;
+    dim3 grid=(32,32);
     dim3 block(32,32);
     long long nByte;
     nByte = 1ll * sizeof(float) * NodeArray_sz;
@@ -3467,7 +3467,7 @@ int main() {
     CHECK(cudaMalloc((float**)&pointValue,nByte));
     CHECK(cudaMemset(pointValue,0,nByte));
 
-    grid=32;
+    grid=(32,32);
     block=(32,32);
     calculatePointsImplicitFunctionValue<<<grid,grid>>>(samplePoints_d,PointToNodeArrayD,count,BaseAddressArray[maxDepth_h],
                                                          NodeArray,d_x,
@@ -3505,7 +3505,7 @@ int main() {
     nByte = 1ll * sizeof(VertexNode) * 8 * NodeArray_sz;
     CHECK(cudaMalloc((VertexNode**)&preVertexArray,nByte));
     CHECK(cudaMemset(preVertexArray,0,nByte));
-    grid=32;
+    grid=(32,32);
     block=(32,32);
     initVertexOwner<<<grid,block>>>(NodeArray,0,NodeArray_sz,
                                     preVertexArray,
@@ -3744,6 +3744,8 @@ int main() {
                                               validVexAddress,vvalue,
                                               VertexBuffer);
     cudaDeviceSynchronize();
+
+    grid = (32,32);
 
     double mid12=cpuSecond();
     printf("Generate interpolate vertices takes:%lfs\n",mid12-mid11);
