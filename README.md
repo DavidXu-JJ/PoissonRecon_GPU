@@ -8,7 +8,7 @@ This algorithm reconstruct the surface by inputing the cloud point of the object
 
 
 
-Compared with V1 version of CPU implementation taking 100s to process Bunny, this version takes 10s to process Bunny on RTX 2050 .
+Compared with V1 version of CPU implementation taking 100s to process Bunny, this version takes 2.7s to process Bunny on RTX 2050 with maxDepth = 9.
 
 
 
