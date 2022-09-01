@@ -65,11 +65,12 @@ __global__ void outputDeviceArray(float *d_addr,int size) {
 //__constant__ float ROUND_EPS=float(1e-5);
 #define ROUND_EPS float(1e-5)
 //__constant__ int maxDepth=9;
-#define maxDepth 9
+#define maxDepth 8
 //__constant__ int markOffset=31;
 #define markOffset 31
 //__constant__ int resolution=1023;
-#define resolution 1023
+#define resolution (1<<(maxDepth+1))-1
+//#define resolution 511
 
 #define stackCapacity 2000
 
@@ -97,8 +98,8 @@ __constant__ int LUTchild[8][27]={
 };
 
 const int markOffset_h=31;
-const int maxDepth_h=9;
-const int normalize=0;
+const int maxDepth_h=maxDepth;
+#define normalize 0
 
 int LUTparent_h[8][27]={
         {0,1,1,3,4,4,3,4,4,9,10,10,12,13,13,12,13,13,9,10,10,12,13,13,12,13,13},
@@ -915,7 +916,16 @@ __device__ float F_center_width_Point(const ConfirmedPPolynomial<convTimes,convT
     float x=value(thisFunction_X,point.coords[0]);
     float y=value(thisFunction_Y,point.coords[1]);
     float z=value(thisFunction_Z,point.coords[2]);
-    return x*y*z;
+    float ret = x*y*z;
+    switch(normalize){
+        case 2:
+            ret/=sqrt(1.0/(1<<(maxDepth)) );
+            break;
+        case 1:
+            ret/= 1.0/(1<<(maxDepth)) ;
+            break;
+    }
+    return ret;
 }
 
 __global__ void computeVectorField(ConfirmedPPolynomial<convTimes,convTimes+2> *BaseFunctionMaxDepth_d,Point3D<float> *samplePoints_d,Point3D<float> *sampleNormals_d,OctNode *NodeArray,int left,int right,Point3D<float> *VectorField){
@@ -942,9 +952,6 @@ __global__ void computeVectorField(ConfirmedPPolynomial<convTimes,convTimes+2> *
                     val.coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
                     val.coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
                     val.coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
-//                    VectorField[IdxInMaxDepth].coords[0] += weight * sampleNormals_d[pointIdx].coords[0];
-//                    VectorField[IdxInMaxDepth].coords[1] += weight * sampleNormals_d[pointIdx].coords[1];
-//                    VectorField[IdxInMaxDepth].coords[2] += weight * sampleNormals_d[pointIdx].coords[2];
                 }
             }
         }
@@ -1132,19 +1139,21 @@ __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNum
     }
 }
 
-__device__ double GetLaplacianEntry(double *&dot_F_DF,double *&dot_F_D2F,
+__device__ double GetLaplacianEntry(double *&dot_F_F,double *&dot_F_D2F,
                                     const int (&idx)[3])
 {
-    double dot[3];
-    dot[0]=dot_F_DF[idx[0]];
-    dot[1]=dot_F_DF[idx[1]];
-    dot[2]=dot_F_DF[idx[2]];
-    double Entry=(
-            dot_F_D2F[idx[0]]*dot[1]*dot[2]+
-            dot_F_D2F[idx[1]]*dot[0]*dot[2]+
-            dot_F_D2F[idx[2]]*dot[0]*dot[1]
-    );
-    return Entry;
+//    double dot[3];
+//    dot[0]=dot_F_F[idx[0]];
+//    dot[1]=dot_F_F[idx[1]];
+//    dot[2]=dot_F_F[idx[2]];
+//    double Entry=(
+//            dot_F_D2F[idx[0]]*dot[1]*dot[2]+
+//            dot_F_D2F[idx[1]]*dot[0]*dot[2]+
+//            dot_F_D2F[idx[2]]*dot[0]*dot[1]
+//    );
+//    return Entry;
+    return float(dot_F_F[idx[0]] * dot_F_F[idx[1]] * dot_F_F[idx[2]]
+                * (dot_F_D2F[idx[0]] + dot_F_D2F[idx[1]] + dot_F_D2F[idx[2]]) );
 }
 
 __global__ void GenerateSingleNodeLaplacian(double *dot_F_F,double *dot_F_D2F,
@@ -1192,7 +1201,7 @@ __global__ void GenerateSingleNodeLaplacian(double *dot_F_F,double *dot_F_D2F,
             scratch[2] = idxO_1[2] * res + idxO_2[2];
 
             double LaplacianEntryValue= GetLaplacianEntry(dot_F_F,dot_F_D2F,scratch);
-            if(LaplacianEntryValue > eps) {
+            if(fabs(LaplacianEntryValue) > eps) {
                 colIdx[colStart + cnt] = colIndex;
                 val[colStart + cnt] = LaplacianEntryValue;
                 ++cnt;
@@ -3244,6 +3253,9 @@ int main() {
 //    char fileName[]="/home/davidxu/eagle.points.ply";
 //    char outName[]="/home/davidxu/eagle.ply";
 
+//    char fileName[]="/home/davidxu/torso.points.ply";
+//    char outName[]="/home/davidxu/torso.ply";
+
     int NodeArrayCount_h[maxDepth_h+1];
     int BaseAddressArray[maxDepth_h+1];
 
@@ -3407,6 +3419,7 @@ int main() {
         for(int j=BaseAddressArray[i];j<BaseAddressArray[i+1];++j){
             int *coverNums=NULL;
             CHECK(cudaMalloc((int**)&coverNums,sizeof(int) * 28));
+            CHECK(cudaMemset(coverNums,0,sizeof(int) * 28));
             computeCoverNums<<<1,1>>>(NodeArray,j,coverNums);
             cudaDeviceSynchronize();
             int coverNums_h[28];
@@ -3437,6 +3450,7 @@ int main() {
 
             CHECK(cudaMemcpy(Divergence+j,&val,sizeof(float),cudaMemcpyHostToDevice));
 
+            cudaFree(coverNums);
             cudaFree(DIdxArray);
             cudaFree(divg);
         }
@@ -3868,8 +3882,7 @@ int main() {
     CHECK(cudaMalloc((Point3D<float>**)&SubdivideArrayCenterBuffer,nByte));
 
 
-
-    int finerDepth = 6;
+    int finerDepth = 3;
     for(int i=0;i<SubdivideNum;++i){
 //        int rootDepth = SubdivideDepthBuffer[i];
         int rootDepth;
