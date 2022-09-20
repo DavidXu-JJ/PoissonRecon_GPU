@@ -14,10 +14,6 @@ Compared with V1 version of CPU implementation taking about 100s to process Bunn
 
 ## Example
 
-### Bunny
-
-<img src="./images/bunny.png" style="zoom:33%;" />
-
 ### Eagle
 
 <img src="./images/eagle.png" style="zoom:33%;" />
