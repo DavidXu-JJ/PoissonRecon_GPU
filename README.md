@@ -12,6 +12,8 @@ Compared with V1 version of CPU implementation taking about 100s to process Bunn
 
 This implementation is my first CUDA project. I'm sorry if you find my implementation is not as efficient as the original paper's implementation.
 
+Testing environment: Ubuntu 22.04 1 LTS, CUDA 11.7, gcc-9
+
 ## Example
 
 ### Eagle
