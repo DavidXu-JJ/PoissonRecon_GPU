@@ -1,6 +1,7 @@
 #include <cstdio>
 #include <bitset>
 #include <cstdlib>
+#include <vector>
 #include <unordered_map>
 #include "Geometry.cuh"
 #include "OctNode.cuh"
@@ -3336,15 +3337,15 @@ int main() {
 
     fData.clearDotTables(fData.DOT_FLAG | fData.D_DOT_FLAG | fData.D2_DOT_FLAG);
 
-    ConfirmedPPolynomial<convTimes+1,convTimes+2> baseFunctions_h[fData.res];
+    std::vector< ConfirmedPPolynomial<convTimes+1,convTimes+2> > baseFunctions_h;
     for(int i=0;i<fData.res;++i){
-        baseFunctions_h[i]=fData.baseFunctions[i];
+        baseFunctions_h.push_back(fData.baseFunctions[i]);
     }
 
     ConfirmedPPolynomial<convTimes+1,convTimes+2> *baseFunctions_d=NULL;
     nByte = 1ll * sizeof(ConfirmedPPolynomial<convTimes+1,convTimes+2>) * fData.res;
     CHECK(cudaMalloc((ConfirmedPPolynomial<convTimes+1,convTimes+2>**)&baseFunctions_d,nByte));
-    CHECK(cudaMemcpy(baseFunctions_d,baseFunctions_h,nByte,cudaMemcpyHostToDevice));
+    CHECK(cudaMemcpy(baseFunctions_d,baseFunctions_h.data(),nByte,cudaMemcpyHostToDevice));
 
     double cpu_ed=cpuSecond();
     printf("CPU generate precomputed inner product table takes:%lfs\n",cpu_ed-cpu_st);
