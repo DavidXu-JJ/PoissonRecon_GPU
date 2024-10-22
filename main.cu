@@ -3248,8 +3248,8 @@ int main() {
 //    char fileName[]="/home/davidxu/horse.npts";
 //    char outName[]="/home/davidxu/horse.ply";
 
-    char fileName[]="/home/davidxu/bunny.points.ply";
-    char outName[]="/home/davidxu/bunny.ply";
+    char fileName[]="/workspace/bunny.points.ply";
+    char outName[]="/workspace/bunny.ply";
 
 //    char fileName[]="/home/davidxu/eagle.points.ply";
 //    char outName[]="/home/davidxu/eagle.ply";
