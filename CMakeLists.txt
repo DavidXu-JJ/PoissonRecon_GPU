@@ -34,4 +34,4 @@ set_target_properties(GPU_PoissonRecon PROPERTIES
 
 target_link_libraries( GPU_PoissonRecon ${CUDA_cusparse_LIBRARY} ${CUDA_cusolver_LIBRARY} ${CUDA_cublas_LIBRARY})
 
-target_compile_options(GPU_PoissonRecon PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-arch=sm_60>)
+target_compile_options(GPU_PoissonRecon PRIVATE $<$<COMPILE_LANGUAGE:CUDA>:-arch=sm_80>)
