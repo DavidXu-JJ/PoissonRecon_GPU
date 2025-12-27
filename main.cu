@@ -1143,18 +1143,18 @@ __global__ void computeEncodedCoarserNodesDivergence(int *DIdxArray,int coverNum
 __device__ double GetLaplacianEntry(double *&dot_F_F,double *&dot_F_D2F,
                                     const int (&idx)[3])
 {
-//    double dot[3];
-//    dot[0]=dot_F_F[idx[0]];
-//    dot[1]=dot_F_F[idx[1]];
-//    dot[2]=dot_F_F[idx[2]];
-//    double Entry=(
-//            dot_F_D2F[idx[0]]*dot[1]*dot[2]+
-//            dot_F_D2F[idx[1]]*dot[0]*dot[2]+
-//            dot_F_D2F[idx[2]]*dot[0]*dot[1]
-//    );
-//    return Entry;
-    return float(dot_F_F[idx[0]] * dot_F_F[idx[1]] * dot_F_F[idx[2]]
-                * (dot_F_D2F[idx[0]] + dot_F_D2F[idx[1]] + dot_F_D2F[idx[2]]) );
+    double dot[3];
+    dot[0]=dot_F_F[idx[0]];
+    dot[1]=dot_F_F[idx[1]];
+    dot[2]=dot_F_F[idx[2]];
+    double Entry=(
+            dot_F_D2F[idx[0]]*dot[1]*dot[2]+
+            dot_F_D2F[idx[1]]*dot[0]*dot[2]+
+            dot_F_D2F[idx[2]]*dot[0]*dot[1]
+    );
+    return Entry;
+    // return float(dot_F_F[idx[0]] * dot_F_F[idx[1]] * dot_F_F[idx[2]]
+    //             * (dot_F_D2F[idx[0]] + dot_F_D2F[idx[1]] + dot_F_D2F[idx[2]]) );
 }
 
 __global__ void GenerateSingleNodeLaplacian(double *dot_F_F,double *dot_F_D2F,
